@@ -149,6 +149,7 @@ impl TablePoolRuntime {
                     .behaviour_mut()
                     .gossipsub
                     .remove_explicit_peer(&peer_id);
+                swarm.behaviour_mut().release_peer_connection(peer_id);
             }
             swarm
                 .behaviour_mut()
@@ -235,6 +236,21 @@ impl TablePoolRuntime {
         ))
     }
 
+    pub(crate) fn adopt_explicit_peers(
+        &mut self,
+        peers: impl IntoIterator<Item = PeerId>,
+    ) -> Result<()> {
+        // Singleton convergence transfers connection leases from the discarded
+        // room into the joining pool so the admission path cannot go half-open.
+        let active = self.active.as_mut().context("公开池迁移时尚未加入匹配池")?;
+        anyhow::ensure!(
+            matches!(active.phase, PoolPhase::Joining { .. }),
+            "只有正在加入牌桌的公开池才能接管连接租约"
+        );
+        active.explicit_peers.extend(peers);
+        Ok(())
+    }
+
     pub(crate) fn cancel(
         &mut self,
         swarm: &mut libp2p::Swarm<NetworkBehaviour>,
@@ -245,6 +261,7 @@ impl TablePoolRuntime {
                 .behaviour_mut()
                 .gossipsub
                 .remove_explicit_peer(&peer_id);
+            swarm.behaviour_mut().release_peer_connection(peer_id);
         }
         swarm
             .behaviour_mut()
@@ -701,6 +718,7 @@ fn synchronize_explicit_pool_peers(
         }
         if swarm.is_connected(&peer_id) {
             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+            swarm.behaviour_mut().retain_peer_connection(peer_id);
             active.explicit_peers.insert(peer_id);
             continue;
         }
