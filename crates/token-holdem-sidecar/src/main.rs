@@ -636,12 +636,21 @@ fn process_pool_decision(
     state: &mut RuntimeState,
     decision: PoolDecision,
 ) -> Result<()> {
-    if matches!(&decision, PoolDecision::Join(_)) && state.session.is_active() {
-        if let Some(event) = state.session.close(swarm) {
+    let migrated_peers = if matches!(&decision, PoolDecision::Join(_)) && state.session.is_active()
+    {
+        if let Some((event, peers)) = state.session.migrate_to_pool(swarm) {
             emit(&event)?;
+            peers
+        } else {
+            Vec::new()
         }
-    }
+    } else {
+        Vec::new()
+    };
     anyhow::ensure!(!state.session.is_active(), "公开池决策到达时已有牌桌会话");
+    if !migrated_peers.is_empty() {
+        state.pool.adopt_explicit_peers(migrated_peers)?;
+    }
     let ticket = state
         .pool
         .local_ticket()

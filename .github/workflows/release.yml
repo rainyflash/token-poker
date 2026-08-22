@@ -70,6 +70,31 @@ jobs:
             throw 'Update manifest must contain exactly one artifact.'
           }
 
+      - name: Validate package through the isolated updater
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath dist/latest.json -Raw | ConvertFrom-Json
+          $artifact = @($manifest.artifacts)[0]
+          $validationRoot = Join-Path $env:RUNNER_TEMP "token-poker-update-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Path $validationRoot -Force | Out-Null
+          try {
+            $archivePath = Join-Path $validationRoot $artifact.name
+            Copy-Item -LiteralPath (Join-Path 'dist' $artifact.name) -Destination $archivePath
+            ./scripts/apply-update.ps1 `
+              -ArchivePath $archivePath `
+              -ExpectedVersion $manifest.version `
+              -ExpectedSha256 $artifact.sha256 `
+              -ExpectedBytes $artifact.bytes `
+              -ParentProcessId $PID `
+              -DelaySeconds 0 `
+              -ValidateOnly
+          }
+          finally {
+            if (Test-Path -LiteralPath $validationRoot) {
+              Remove-Item -LiteralPath $validationRoot -Recurse -Force
+            }
+          }
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:

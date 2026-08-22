@@ -4,6 +4,7 @@ import type {
   OfficialUsageState,
   SidecarEvent,
   TokenSnapshot,
+  UpdateStatus,
 } from "./contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -204,6 +205,48 @@ export function parseOfficialUsageState(value: unknown): OfficialUsageState | nu
     return null;
   }
   return { phase: value.phase, error: value.phase === "error" ? error : null };
+}
+
+export function parseUpdateStatus(value: unknown): UpdateStatus | null {
+  if (!isRecord(value)) return null;
+  const latestVersion = value.latest_version ?? null;
+  const releaseUrl = value.release_url ?? null;
+  const artifactBytes = value.artifact_bytes ?? null;
+  const error = value.error ?? null;
+  if (
+    !isStringMember(value.phase, [
+      "idle",
+      "checking",
+      "current",
+      "available",
+      "downloading",
+      "ready",
+      "installing",
+      "restart_required",
+      "error",
+    ] as const) ||
+    !isString(value.current_version) ||
+    value.current_version.length === 0 ||
+    !isNullableString(latestVersion) ||
+    !isNullableString(releaseUrl) ||
+    !isNullablePositiveSafeInteger(artifactBytes) ||
+    !isNonNegativeSafeInteger(value.downloaded_bytes) ||
+    typeof value.sha256_verified !== "boolean" ||
+    !isNullableString(error)
+  ) {
+    return null;
+  }
+  if (value.phase === "error" && (error === null || error.length === 0)) return null;
+  return {
+    phase: value.phase,
+    currentVersion: value.current_version,
+    latestVersion,
+    releaseUrl,
+    artifactBytes,
+    downloadedBytes: value.downloaded_bytes,
+    sha256Verified: value.sha256_verified,
+    error: value.phase === "error" ? error : null,
+  };
 }
 
 export function parseSidecarEvent(value: unknown): SidecarEvent | null {

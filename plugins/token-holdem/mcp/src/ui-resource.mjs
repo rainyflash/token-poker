@@ -74,6 +74,16 @@ function buildHostBridge(version) {
   globalThis.__tokenHoldemBridgeInstalled = true;
   globalThis.__tokenHoldemMountRoot = mountRoot;
   globalThis.__tokenHoldemPortalRoot = portalRoot;
+  globalThis.__tokenPokerUpdateStatus = {
+    phase: "idle",
+    current_version: ${JSON.stringify(version)},
+    latest_version: null,
+    release_url: null,
+    artifact_bytes: null,
+    downloaded_bytes: 0,
+    sha256_verified: false,
+    error: null,
+  };
   globalThis.__tokenHoldemBufferedSidecarEvents = Array.isArray(
     globalThis.__tokenHoldemBufferedSidecarEvents,
   )
@@ -83,6 +93,7 @@ function buildHostBridge(version) {
   let latestSequence = 0;
   let stopped = false;
   let commandQueue = Promise.resolve();
+  let updateQueue = Promise.resolve();
   const app = new apps.App(
     { name: "token-holdem", version: ${JSON.stringify(version)} },
     { availableDisplayModes: ["inline", "pip", "fullscreen"] },
@@ -127,6 +138,20 @@ function buildHostBridge(version) {
     }));
   }
 
+  function publishUpdateStatus(detail) {
+    if (!detail || typeof detail !== "object") return;
+    globalThis.__tokenPokerUpdateStatus = detail;
+    globalThis.dispatchEvent(new CustomEvent("token-poker:update-status", { detail }));
+  }
+
+  function publishPendingUpdatePhase(phase) {
+    publishUpdateStatus({
+      ...globalThis.__tokenPokerUpdateStatus,
+      phase,
+      error: null,
+    });
+  }
+
   function resultError(result) {
     const text = Array.isArray(result?.content)
       ? result.content.find((item) => item?.type === "text")?.text
@@ -154,6 +179,7 @@ function buildHostBridge(version) {
     }
     if (payload && typeof payload === "object") {
       publishAccountBinding(payload.account_binding);
+      publishUpdateStatus(payload.update_status);
     }
     if (result.isError) {
       if (officialUsageError === null) publishWarning(resultError(result));
@@ -203,6 +229,19 @@ function buildHostBridge(version) {
     }
   }
 
+  async function runUpdateTool(name, pendingPhase, timeoutMs) {
+    publishPendingUpdatePhase(pendingPhase);
+    try {
+      await callTool(name, {}, timeoutMs);
+    } catch (error) {
+      publishUpdateStatus({
+        ...globalThis.__tokenPokerUpdateStatus,
+        phase: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   globalThis.tokenHoldemCommand = (payload) => {
     let command;
     try {
@@ -215,6 +254,16 @@ function buildHostBridge(version) {
       commandQueue = commandQueue
         .then(refreshOfficialUsage)
         .catch((error) => publishWarning(error instanceof Error ? error.message : String(error)));
+      return;
+    }
+    const updateTools = {
+      check_update: ["token_holdem_check_update", "checking", 45_000],
+      prepare_update: ["token_holdem_prepare_update", "downloading", 5 * 60_000],
+      install_update: ["token_holdem_install_update", "installing", 45_000],
+    };
+    if (Object.prototype.hasOwnProperty.call(updateTools, command?.type)) {
+      const [toolName, pendingPhase, timeoutMs] = updateTools[command.type];
+      updateQueue = updateQueue.then(() => runUpdateTool(toolName, pendingPhase, timeoutMs));
       return;
     }
     if (command?.type === "close_ui") {
@@ -265,6 +314,9 @@ function buildHostBridge(version) {
     .then(async () => {
       applyHostContext(app.getHostContext?.());
       await app.requestDisplayMode({ mode: "fullscreen" }).catch(() => undefined);
+      updateQueue = updateQueue.then(() =>
+        runUpdateTool("token_holdem_check_update", "checking", 45_000),
+      );
       void pollLoop();
     })
     .catch((error) => {

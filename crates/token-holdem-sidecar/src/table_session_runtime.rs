@@ -479,6 +479,30 @@ impl TableSessionRuntime {
         })
     }
 
+    pub(crate) fn migrate_to_pool(
+        &mut self,
+        swarm: &mut libp2p::Swarm<NetworkBehaviour>,
+    ) -> Option<(TableSessionEvent, Vec<PeerId>)> {
+        // Do not release explicit peers while a singleton room converges into a
+        // populated table. The pool owns these leases until admission succeeds.
+        let active = self.active.take()?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .unsubscribe(&gossipsub::IdentTopic::new(active.topic));
+        let peers = if active.owns_explicit_peers {
+            active.explicit_peers.into_iter().collect()
+        } else {
+            Vec::new()
+        };
+        Some((
+            TableSessionEvent::RoomClosed {
+                table_id: active.table_id.to_string(),
+            },
+            peers,
+        ))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn tick(
         &mut self,

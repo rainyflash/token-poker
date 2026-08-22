@@ -21,6 +21,7 @@ test("发布载荷清单覆盖 MCP UI 的全部磁盘依赖", async () => {
   const requiredFiles = [
     "mcp/server.bundle.mjs",
     "mcp/vendor/ext-apps-app-with-deps.js",
+    "scripts/apply-update.ps1",
     "ui/token-holdem.css",
     "ui/token-holdem.js",
   ];
@@ -99,6 +100,9 @@ test("官方插件通过 MCP 读取官方账户用量并返回隔离牌桌资源
   );
   assert.equal(toolsByName.has("token_holdem_sync_official_tokens"), false);
   assert.deepEqual(toolsByName.get("token_holdem_command")?._meta?.ui?.visibility, ["app"]);
+  assert.deepEqual(toolsByName.get("token_holdem_check_update")?._meta?.ui?.visibility, ["app"]);
+  assert.deepEqual(toolsByName.get("token_holdem_prepare_update")?._meta?.ui?.visibility, ["app"]);
+  assert.deepEqual(toolsByName.get("token_holdem_install_update")?._meta?.ui?.visibility, ["app"]);
 
   const resource = await client.readResource({ uri: "ui://token-holdem/table.html" });
   const html = resource.contents[0]?.text;

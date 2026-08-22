@@ -75,6 +75,7 @@ export function App() {
         bridge={bridge}
         onOpenSubview={openSubview}
         onSyncToken={() => sendCommand({ type: "request_token_refresh" })}
+        sendCommand={sendCommand}
         onClose={close}
       >
         {primaryContent}

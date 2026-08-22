@@ -7,6 +7,7 @@
     "config/community-nodes.json",
     "mcp/server.bundle.mjs",
     "mcp/vendor/ext-apps-app-with-deps.js",
+    "scripts/apply-update.ps1",
     "scripts/launch-mcp.cmd",
     "skills/token-holdem/SKILL.md",
     "ui/token-holdem.css",

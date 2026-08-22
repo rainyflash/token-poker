@@ -247,6 +247,16 @@ async function main() {
       "下一手没有重置为入桌时双方签名买入额",
     );
 
+    await waitUntil(
+      () =>
+        [host, guest].every((player) => {
+          const statistics = player.latest("statistics_updated");
+          return statistics?.completed_hands === 3 &&
+            statistics.recent_hands.every((hand) => hand.archived === true);
+        }),
+      20_000,
+      "归档成功后统计投影没有收敛为已归档",
+    );
     const hostStatistics = host.latest("statistics_updated");
     const guestStatistics = guest.latest("statistics_updated");
     assert(hostStatistics.completed_hands === 3 && guestStatistics.completed_hands === 3, "三手战绩计数错误");
