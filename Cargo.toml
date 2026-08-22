@@ -22,7 +22,7 @@ argon2 = "0.5"
 ark-serialize = "0.5"
 ark-std = "0.5"
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 blake3 = "1.5"
 chacha20poly1305 = "0.10"
 cbor4ii = { version = "0.3", features = ["serde1", "use_std"] }
