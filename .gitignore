@@ -7,6 +7,7 @@
 /plugins/token-holdem/mcp/vendor/
 /plugins/token-holdem/bin/
 /plugins/token-holdem/ui/
+/plugins/token-holdem/scripts/apply-update.ps1
 /dist/
 /output/
 /.playwright-cli/

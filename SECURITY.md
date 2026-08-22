@@ -91,4 +91,6 @@ Archive nodes store opaque, encrypted identity packages and signed receipt bytes
 
 GitHub Releases provide an unsigned ZIP, a SHA-256 file, and `latest.json`. The checksum detects corruption and unintended byte changes. Because the checksum is distributed from the same account as the ZIP, it does not independently authenticate the publisher or protect against a compromised repository account.
 
-The updater must stage downloads, validate schema and semantic version, enforce the expected repository origin, verify SHA-256, and wait until running plugin processes release their files. It must never overwrite the active MCP or sidecar in place.
+The in-app updater stages downloads under `%LOCALAPPDATA%\TokenHoldem\updates`, validates the exact stable schema, semantic version, repository, Windows target, artifact name, size, and GitHub URLs, follows redirects only to GitHub release-asset origins, and verifies SHA-256 before enabling installation. A detached PowerShell helper rejects archive traversal and undeclared files, recomputes every package-manifest digest, and then invokes the existing Codex CLI installer. It never overwrites the active MCP or sidecar in place.
+
+The update manifest and package are served by the same GitHub repository account. A compromised maintainer or repository account can therefore publish a malicious ZIP and matching digest. Automatic checking does not imply independent publisher authentication; installation always requires explicit user confirmation.

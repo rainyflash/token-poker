@@ -64,13 +64,13 @@ Each release includes `latest.json`:
 {
   "schema_version": 1,
   "channel": "stable",
-  "version": "0.3.1",
-  "tag": "v0.3.1",
+  "version": "0.4.0",
+  "tag": "v0.4.0",
   "repository": "rainyflash/token-poker",
   "artifacts": [
     {
       "target": "windows-x64",
-      "name": "token-poker-plugin-v0.3.1-windows-x64.zip",
+      "name": "token-poker-plugin-v0.4.0-windows-x64.zip",
       "bytes": 123,
       "sha256": "..."
     }
@@ -84,13 +84,15 @@ The stable discovery URL is:
 https://github.com/rainyflash/token-poker/releases/latest/download/latest.json
 ```
 
-Consumers must reject unknown schemas, malformed semantic versions, unexpected repositories, unsupported targets, invalid sizes, and SHA-256 mismatches. An updater must stage files and wait for the active plugin processes to exit before installation.
+The in-app updater rejects unknown schemas, malformed semantic versions, unexpected repositories, unsupported targets, invalid sizes, untrusted redirects, archive traversal, undeclared package files, and SHA-256 mismatches. It stages files outside the plugin cache and uses a detached process so active MCP and sidecar binaries are never overwritten in place.
+
+Version 0.4.0 is the updater bootstrap release. Install it manually when upgrading from 0.3.x; subsequent stable releases can be checked, downloaded, verified, and confirmed inside Token Poker.
 
 ## Integrity and risk
 
 ```powershell
-(Get-FileHash .\token-poker-plugin-v0.3.1-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-Get-Content .\token-poker-plugin-v0.3.1-windows-x64.zip.sha256
+(Get-FileHash .\token-poker-plugin-v0.4.0-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+Get-Content .\token-poker-plugin-v0.4.0-windows-x64.zip.sha256
 ```
 
 The digests must match. SHA-256 verifies bytes, not publisher identity. The ZIP, Rust binaries, and PowerShell installer are not Authenticode-signed, so Windows may display an unknown-publisher warning.

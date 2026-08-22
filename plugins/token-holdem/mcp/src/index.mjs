@@ -18,6 +18,7 @@ import {
   refreshOfficialUsageToolSchema,
 } from "./tool-contracts.mjs";
 import { buildTokenHoldemHtml } from "./ui-resource.mjs";
+import { createUpdateService } from "./update/index.mjs";
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
 const pluginRoot = resolve(moduleDirectory, "..");
@@ -30,6 +31,7 @@ const officialTokens = new OfficialTokenService({
   reader: new CodexAccountUsageReader({ clientVersion: manifest.version }),
   runtime,
 });
+const updates = createUpdateService({ currentVersion: manifest.version, pluginRoot });
 const FRESH_USAGE_COMMANDS = new Set([
   "join_public_pool",
   "create_friend_room",
@@ -203,6 +205,84 @@ registerAppTool(
   },
 );
 
+registerAppTool(
+  server,
+  "token_holdem_check_update",
+  {
+    title: "Check for Token Poker updates",
+    description: "Read and validate the stable release manifest from the official GitHub repository.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    _meta: appToolMeta(["app"], "Checking for updates…", "Update check completed"),
+  },
+  async () => {
+    const status = await updates.check();
+    const message =
+      status.phase === "available"
+        ? `Token Poker ${status.latest_version} is available.`
+        : status.phase === "current"
+          ? `Token Poker ${manifest.version} is current.`
+          : `Could not check for Token Poker updates: ${status.error}`;
+    return toolResult(message, currentPayload("update_check"));
+  },
+);
+
+registerAppTool(
+  server,
+  "token_holdem_prepare_update",
+  {
+    title: "Download and verify a Token Poker update",
+    description:
+      "Download the selected stable Windows package into local staging and verify its declared size and SHA-256 digest.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    _meta: appToolMeta(["app"], "Downloading verified update…", "Update package verified"),
+  },
+  async () => {
+    const status = await updates.prepare();
+    return toolResult(
+      status.phase === "ready"
+        ? `Token Poker ${status.latest_version} was downloaded and verified.`
+        : `Could not prepare the Token Poker update: ${status.error}`,
+      currentPayload("update_prepare"),
+    );
+  },
+);
+
+registerAppTool(
+  server,
+  "token_holdem_install_update",
+  {
+    title: "Install the verified Token Poker update",
+    description:
+      "Hand the verified package to an isolated updater, replace the plugin through Codex CLI, and require a Codex restart.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    _meta: appToolMeta(["app"], "Starting verified update…", "Updater started"),
+  },
+  async () => {
+    const status = await updates.install();
+    return toolResult(
+      status.phase === "restart_required"
+        ? "The verified updater started. Restart Codex after installation finishes."
+        : `Could not start the Token Poker update: ${status.error}`,
+      currentPayload("update_install"),
+    );
+  },
+);
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
@@ -235,6 +315,7 @@ function payloadFromEventBatch(action, eventBatch) {
     action,
     token_snapshot: currentTokenObservation(),
     account_binding: runtime.accountBinding,
+    update_status: updates.snapshot,
     ...eventBatch,
   };
 }

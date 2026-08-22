@@ -31,7 +31,7 @@ $nodeScriptRoots = @(
     (Join-Path $projectRoot 'plugins\token-holdem\mcp\test')
 )
 $nodeScripts = foreach ($root in $nodeScriptRoots) {
-    Get-ChildItem -LiteralPath $root -Filter '*.mjs' -File
+    Get-ChildItem -LiteralPath $root -Filter '*.mjs' -File -Recurse
 }
 $nodeScripts += Get-Item -LiteralPath (Join-Path $projectRoot 'plugins\token-holdem\mcp\build.mjs')
 

@@ -25,6 +25,28 @@ export interface OfficialUsageState {
   readonly error: string | null;
 }
 
+export type UpdatePhase =
+  | "idle"
+  | "checking"
+  | "current"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "installing"
+  | "restart_required"
+  | "error";
+
+export interface UpdateStatus {
+  readonly phase: UpdatePhase;
+  readonly currentVersion: string;
+  readonly latestVersion: string | null;
+  readonly releaseUrl: string | null;
+  readonly artifactBytes: number | null;
+  readonly downloadedBytes: number;
+  readonly sha256Verified: boolean;
+  readonly error: string | null;
+}
+
 export interface IdentitySnapshot {
   readonly playerId: string;
   readonly devicePublicKey: string;
@@ -285,6 +307,9 @@ export type HostCommand =
     }
   | { readonly type: "leave_table" }
   | { readonly type: "request_token_refresh" }
+  | { readonly type: "check_update" }
+  | { readonly type: "prepare_update" }
+  | { readonly type: "install_update" }
   | { readonly type: "sync_statistics" }
   | { readonly type: "close_ui" };
 
@@ -663,6 +688,7 @@ export interface BridgeSnapshot {
   readonly hand: HandSnapshot;
   readonly tokenSnapshot: TokenSnapshot | null;
   readonly officialUsage: OfficialUsageState;
+  readonly update: UpdateStatus;
   readonly accountBinding: AccountBindingSnapshot | null;
   readonly identity: IdentitySnapshot | null;
   readonly friendInviteCode: string | null;

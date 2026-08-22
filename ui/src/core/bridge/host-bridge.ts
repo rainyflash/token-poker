@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import packageManifest from "../../../package.json";
 import type {
   BridgeSnapshot,
   CommandResult,
@@ -14,6 +15,7 @@ import {
   parseOfficialUsageState,
   parseSidecarEvent,
   parseTokenSnapshot,
+  parseUpdateStatus,
 } from "./guards";
 import { findStakeLevel } from "../domain/stake-levels";
 import {
@@ -28,6 +30,7 @@ declare global {
   var __tokenHoldemLastSnapshot: unknown;
   var __tokenHoldemOfficialUsageState: unknown;
   var __tokenHoldemLastAccountBinding: unknown;
+  var __tokenPokerUpdateStatus: unknown;
   var __tokenHoldemBufferedSidecarEvents: unknown[] | undefined;
   var __tokenHoldemMountRoot: HTMLElement | undefined;
   var __tokenHoldemPortalRoot: HTMLElement | undefined;
@@ -59,6 +62,11 @@ function bridgeText(key: MessageKey, variables?: MessageVariables): string {
 const HOST_BRIDGE_INSTALLED =
   globalThis.__tokenHoldemBridgeInstalled === true ||
   (import.meta.env.DEV && new URLSearchParams(globalThis.location.search).get("host-preview") === "1");
+const PREVIEW_UPDATE_VERSION = import.meta.env.DEV
+  ? new URLSearchParams(globalThis.location.search).get("update-preview")
+  : null;
+const HAS_PREVIEW_UPDATE =
+  PREVIEW_UPDATE_VERSION !== null && /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/u.test(PREVIEW_UPDATE_VERSION);
 
 const PREVIEW_ACCOUNT_FINGERPRINT =
   "8f3c58d35e4a9db2b6a00d54a1a8d88a7ab3e9114f8924a7ce5510d23f9b8af6";
@@ -75,6 +83,19 @@ const INITIAL_ACCOUNT_BINDING =
         accountFingerprint: PREVIEW_ACCOUNT_FINGERPRINT,
         peerVerifiable: false,
       });
+
+const INITIAL_UPDATE_STATUS =
+  parseUpdateStatus(globalThis.__tokenPokerUpdateStatus) ??
+  Object.freeze({
+    phase: HAS_PREVIEW_UPDATE ? "available" as const : "idle" as const,
+    currentVersion: packageManifest.version,
+    latestVersion: HAS_PREVIEW_UPDATE ? PREVIEW_UPDATE_VERSION : null,
+    releaseUrl: HAS_PREVIEW_UPDATE ? "https://github.com/rainyflash/token-poker/releases" : null,
+    artifactBytes: HAS_PREVIEW_UPDATE ? 8_388_608 : null,
+    downloadedBytes: 0,
+    sha256Verified: false,
+    error: null,
+  });
 
 const EMPTY_HAND: HandSnapshot = Object.freeze({
   phase: "idle",
@@ -203,6 +224,7 @@ const INITIAL_STATE: BridgeSnapshot = Object.freeze({
     (INITIAL_TOKEN_SNAPSHOT === null
       ? { phase: "idle" as const, error: null }
       : { phase: "ready" as const, error: null }),
+  update: INITIAL_UPDATE_STATUS,
   accountBinding: INITIAL_ACCOUNT_BINDING,
   identity: null,
   friendInviteCode: null,
@@ -256,6 +278,7 @@ class HostBridgeStore {
       this.#handleOfficialUsageState,
     );
     globalThis.addEventListener("token-holdem:account-binding", this.#handleAccountBinding);
+    globalThis.addEventListener("token-poker:update-status", this.#handleUpdateStatus);
     globalThis.addEventListener("token-holdem:sidecar", this.#handleSidecarEvent);
     for (const rawEvent of globalThis.__tokenHoldemBufferedSidecarEvents ?? []) {
       const event = parseSidecarEvent(rawEvent);
@@ -277,6 +300,22 @@ class HostBridgeStore {
         officialUsage: { phase: "loading", error: null },
       });
     }
+    const pendingUpdatePhase = {
+      check_update: "checking",
+      prepare_update: "downloading",
+      install_update: "installing",
+    } as const;
+    if (command.type in pendingUpdatePhase) {
+      const updateCommand = command.type as keyof typeof pendingUpdatePhase;
+      this.#replace({
+        ...this.#snapshot,
+        update: {
+          ...this.#snapshot.update,
+          phase: pendingUpdatePhase[updateCommand],
+          error: null,
+        },
+      });
+    }
     if (this.#snapshot.mode === "preview") {
       this.#runPreviewCommand(command);
       return { ok: true };
@@ -286,6 +325,16 @@ class HostBridgeStore {
         this.#replace({
           ...this.#snapshot,
           officialUsage: { phase: "error", error: bridgeText("bridge.hostUnavailable") },
+        });
+      }
+      if (command.type in pendingUpdatePhase) {
+        this.#replace({
+          ...this.#snapshot,
+          update: {
+            ...this.#snapshot.update,
+            phase: "error",
+            error: bridgeText("bridge.hostUnavailable"),
+          },
         });
       }
       return { ok: false, error: bridgeText("bridge.hostUnavailable") };
@@ -324,6 +373,13 @@ class HostBridgeStore {
     const accountBinding = parseAccountBinding(event.detail);
     if (accountBinding === null) return;
     this.#replace({ ...this.#snapshot, accountBinding });
+  };
+
+  #handleUpdateStatus = (event: Event): void => {
+    if (!(event instanceof CustomEvent)) return;
+    const update = parseUpdateStatus(event.detail);
+    if (update === null) return;
+    this.#replace({ ...this.#snapshot, update });
   };
 
   #handleSidecarEvent = (event: Event): void => {
@@ -1148,6 +1204,54 @@ class HostBridgeStore {
           tokenSnapshot: PREVIEW_SNAPSHOT,
           officialUsage: { phase: "ready", error: null },
         });
+        break;
+      case "check_update":
+        this.#replace({
+          ...this.#snapshot,
+          update: {
+            ...this.#snapshot.update,
+            phase: HAS_PREVIEW_UPDATE ? "available" : "current",
+            error: null,
+          },
+        });
+        break;
+      case "prepare_update": {
+        if (!HAS_PREVIEW_UPDATE) {
+          this.#replace({
+            ...this.#snapshot,
+            update: {
+              ...this.#snapshot.update,
+              phase: "error",
+              error: "No preview update is configured",
+            },
+          });
+          break;
+        }
+        globalThis.setTimeout(() => {
+          this.#replace({
+            ...this.#snapshot,
+            update: {
+              ...this.#snapshot.update,
+              phase: "ready",
+              downloadedBytes: this.#snapshot.update.artifactBytes ?? 0,
+              sha256Verified: true,
+              error: null,
+            },
+          });
+        }, 260);
+        break;
+      }
+      case "install_update":
+        globalThis.setTimeout(() => {
+          this.#replace({
+            ...this.#snapshot,
+            update: {
+              ...this.#snapshot.update,
+              phase: "restart_required",
+              error: null,
+            },
+          });
+        }, 260);
         break;
       case "sync_statistics":
         break;

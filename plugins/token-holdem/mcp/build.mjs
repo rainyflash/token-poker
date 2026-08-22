@@ -15,6 +15,7 @@ const runtimeExecutableName =
 await Promise.all([
   mkdir(join(pluginRoot, "bin"), { recursive: true }),
   mkdir(join(pluginRoot, "config"), { recursive: true }),
+  mkdir(join(pluginRoot, "scripts"), { recursive: true }),
   mkdir(join(pluginRoot, "ui"), { recursive: true }),
   mkdir(join(mcpRoot, "vendor"), { recursive: true }),
 ]);
@@ -45,6 +46,10 @@ await Promise.all([
   copyFile(
     join(projectRoot, "config", "community-nodes.json"),
     join(pluginRoot, "config", "community-nodes.json"),
+  ),
+  copyFile(
+    join(projectRoot, "scripts", "apply-update.ps1"),
+    join(pluginRoot, "scripts", "apply-update.ps1"),
   ),
   copyFile(
     join(projectRoot, "ui", "dist", "token-holdem.js"),

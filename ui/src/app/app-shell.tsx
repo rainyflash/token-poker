@@ -1,9 +1,10 @@
 import { ChartNoAxesCombined, ChevronLeft, KeyRound, Languages, RefreshCw } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
-import type { BridgeSnapshot } from "../core/bridge/contracts";
+import type { BridgeSnapshot, CommandResult, HostCommand } from "../core/bridge/contracts";
 import { useI18n } from "../core/i18n/use-i18n";
 import { projectPlayerProfile } from "../features/account/model/player-profile";
+import { UpdateDialog } from "../features/update/update-dialog";
 import { AccountAvatar } from "../shared/ui/account-avatar";
 import { Button } from "../shared/ui/button";
 import { CodexMark } from "../shared/ui/codex-mark";
@@ -15,6 +16,7 @@ interface AppShellProps {
   readonly bridge: BridgeSnapshot;
   readonly onOpenSubview: (subview: AppSubview) => void;
   readonly onSyncToken: () => void;
+  readonly sendCommand: (command: HostCommand) => CommandResult;
   readonly onClose: () => void;
   readonly children: ReactNode;
 }
@@ -25,6 +27,7 @@ export function AppShell({
   bridge,
   onOpenSubview,
   onSyncToken,
+  sendCommand,
   onClose,
   children,
 }: AppShellProps) {
@@ -82,6 +85,7 @@ export function AppShell({
           >
             <KeyRound className="size-4" strokeWidth={1.7} />
           </Button>
+          <UpdateDialog status={bridge.update} sendCommand={sendCommand} />
           <button
             type="button"
             onClick={onSyncToken}
