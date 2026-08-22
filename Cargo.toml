@@ -11,9 +11,9 @@ exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
@@ -29,7 +29,7 @@ cbor4ii = { version = "0.3", features = ["serde1", "use_std"] }
 ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "zeroize"] }
 futures = "0.3"
 hex = "0.4"
-libp2p = { version = "0.56", features = [
+libp2p = { git = "https://github.com/libp2p/rust-libp2p", rev = "170c3c81ddd80e7c58b0500563e00a09139e8545", features = [
     "autonat",
     "cbor",
     "dcutr",

@@ -64,13 +64,13 @@ Each release includes `latest.json`:
 {
   "schema_version": 1,
   "channel": "stable",
-  "version": "0.3.0",
-  "tag": "v0.3.0",
+  "version": "0.3.1",
+  "tag": "v0.3.1",
   "repository": "rainyflash/token-poker",
   "artifacts": [
     {
       "target": "windows-x64",
-      "name": "token-poker-plugin-v0.3.0-windows-x64.zip",
+      "name": "token-poker-plugin-v0.3.1-windows-x64.zip",
       "bytes": 123,
       "sha256": "..."
     }
@@ -89,8 +89,8 @@ Consumers must reject unknown schemas, malformed semantic versions, unexpected r
 ## Integrity and risk
 
 ```powershell
-(Get-FileHash .\token-poker-plugin-v0.3.0-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-Get-Content .\token-poker-plugin-v0.3.0-windows-x64.zip.sha256
+(Get-FileHash .\token-poker-plugin-v0.3.1-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+Get-Content .\token-poker-plugin-v0.3.1-windows-x64.zip.sha256
 ```
 
 The digests must match. SHA-256 verifies bytes, not publisher identity. The ZIP, Rust binaries, and PowerShell installer are not Authenticode-signed, so Windows may display an unknown-publisher warning.

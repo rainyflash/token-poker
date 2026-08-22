@@ -131,11 +131,11 @@ impl VolunteerRuntime {
 
     pub(crate) fn on_upnp(&mut self, event: &upnp::Event) -> VolunteerEvent {
         match event {
-            upnp::Event::NewExternalAddr(address) => {
-                self.remember_confirmed_address(address);
+            upnp::Event::NewExternalAddr { external_addr, .. } => {
+                self.remember_confirmed_address(external_addr);
             }
-            upnp::Event::ExpiredExternalAddr(address) => {
-                self.forget_confirmed_address(address);
+            upnp::Event::ExpiredExternalAddr { external_addr, .. } => {
+                self.forget_confirmed_address(external_addr);
             }
             upnp::Event::GatewayNotFound | upnp::Event::NonRoutableGateway => {}
         }
@@ -253,6 +253,7 @@ impl VolunteerRuntime {
                 destination_peer_id: dst_peer_id.to_string(),
                 action: "failed",
             },
+            relay::Event::StatusChanged { .. } => return vec![self.status()],
         };
         vec![detail, self.status()]
     }

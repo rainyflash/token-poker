@@ -113,7 +113,7 @@ See [Community node operations](./docs/COMMUNITY-NODE.md) for deployment details
 
 ## Build and test
 
-The repository pins contributor toolchains through `.node-version` and `rust-toolchain.toml`. These pins do not affect plugin users.
+The repository pins contributor toolchains through `.node-version` and `rust-toolchain.toml`. These pins do not affect plugin users. Until `libp2p 0.57` is published, Cargo also pins an official `rust-libp2p` revision so the security-fixed Yamux and Hickory dependency graph is reproducible.
 
 ```powershell
 cargo fmt --all -- --check
@@ -135,6 +135,7 @@ npm test
 Pop-Location
 
 ./scripts/check-syntax.ps1
+python ./scripts/check-rust-security-baseline.py
 python ./scripts/check-source-language.py
 node --test scripts/community-network.test.mjs
 node scripts/verify-volunteer-network.mjs
@@ -148,7 +149,7 @@ Build the unsigned Windows x64 plugin package with:
 python ./scripts/build-plugin.py
 ```
 
-The `dist/` directory receives a reproducible ZIP, its external SHA-256 file, and a machine-readable `latest.json` update manifest. Node.js, npm, `node_modules`, the Codex App Server, and development-only CDP tooling are excluded.
+The `dist/` directory receives a deterministically assembled ZIP, its external SHA-256 file, and a machine-readable `latest.json` update manifest. Identical compiled inputs produce identical archives; compiler outputs may differ across build environments. Node.js, npm, `node_modules`, the Codex App Server, and development-only CDP tooling are excluded.
 
 ## Release channels and updates
 

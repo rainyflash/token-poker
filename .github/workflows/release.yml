@@ -45,6 +45,10 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME does not match $expectedTag."
           }
 
+      - name: Verify Rust security baseline
+        shell: pwsh
+        run: python ./scripts/check-rust-security-baseline.py
+
       - name: Build release assets
         shell: pwsh
         run: python ./scripts/build-plugin.py

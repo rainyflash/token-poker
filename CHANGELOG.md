@@ -2,6 +2,19 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-08-22
+
+### Changed
+
+- Pinned `rust-libp2p` to security-fixed official upstream revision `170c3c81ddd80e7c58b0500563e00a09139e8545` until the 0.57 release is published.
+- Updated the Rust MSRV declaration to 1.88 and adapted UPnP and Relay event handling to the new upstream API.
+
+### Security
+
+- Removed vulnerable `yamux 0.12.1` and upgraded the dependency graph to `yamux 0.14.0`, addressing GHSA-vxx9-2994-q338.
+- Upgraded `hickory-proto` from 0.25.2 to 0.26.1, addressing GHSA-q2qq-hmj6-3wpp.
+- Verified that the upgraded client can reserve Relay capacity and register through both TCP and QUIC against the existing Singapore community node.
+
 ## [0.3.0] - 2026-08-22
 
 ### Added
@@ -27,4 +40,5 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.3.1]: https://github.com/rainyflash/token-poker/releases/tag/v0.3.1
 [0.3.0]: https://github.com/rainyflash/token-poker/releases/tag/v0.3.0
