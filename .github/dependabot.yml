@@ -2,19 +2,37 @@ version: 2
 updates:
   - package-ecosystem: cargo
     directory: "/"
+    versioning-strategy: lockfile-only
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      compatible-lockfile-updates:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: "/ui"
+    versioning-strategy: lockfile-only
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      compatible-lockfile-updates:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: npm
     directory: "/plugins/token-holdem/mcp"
+    versioning-strategy: lockfile-only
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      compatible-lockfile-updates:
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
