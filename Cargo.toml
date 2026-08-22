@@ -19,7 +19,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 anyhow = "1.0"
 argon2 = "0.5"
-ark-serialize = "0.5"
+ark-serialize = "0.6"
 ark-std = "0.5"
 async-trait = "0.1"
 base64 = "0.22"
