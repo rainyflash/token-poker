@@ -1,0 +1,20 @@
+{
+  "name": "token-holdem-community",
+  "interface": {
+    "displayName": "Token Poker Open Source"
+  },
+  "plugins": [
+    {
+      "name": "token-holdem",
+      "source": {
+        "source": "local",
+        "path": "./plugins/token-holdem"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Games"
+    }
+  ]
+}

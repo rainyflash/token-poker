@@ -1,0 +1,28 @@
+FROM rust:1.97.1-bookworm AS builder
+
+WORKDIR /source
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/source/target \
+    cargo build --locked --release -p token-holdem-sidecar \
+    && cp /source/target/release/token-holdem-sidecar /token-holdem-sidecar
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system token-holdem \
+    && useradd --system --gid token-holdem --home-dir /data token-holdem \
+    && install --directory --owner token-holdem --group token-holdem /data
+
+COPY --from=builder /token-holdem-sidecar /usr/local/bin/token-holdem-sidecar
+
+USER token-holdem:token-holdem
+WORKDIR /data
+VOLUME ["/data"]
+EXPOSE 4001/tcp
+EXPOSE 4001/udp
+
+ENTRYPOINT ["/usr/local/bin/token-holdem-sidecar"]
+CMD ["--archive-dir=/data", "--node-key-file=/data/libp2p-identity-key", "--rendezvous-server", "--relay-server", "--public-node", "--daemon", "--volunteer-consent=granted", "--network-cost=unmetered", "--power-source=ac", "--listen=/ip4/0.0.0.0/tcp/4001", "--listen=/ip4/0.0.0.0/udp/4001/quic-v1"]

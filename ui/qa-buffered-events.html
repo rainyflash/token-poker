@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Token Poker · 状态投影与早到事件 QA</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      globalThis.__tokenHoldemBridgeInstalled = true;
+      globalThis.__tokenHoldemLastSnapshot = {
+        lifetime_tokens: 35500000000,
+        username: "qa-player",
+        display_name: "初始化回放测试",
+        observed_at_unix_ms: 1787337600000,
+        source: "codex_app_server_account_usage",
+      };
+      globalThis.__tokenHoldemOfficialUsageState = { phase: "ready", error: null };
+      globalThis.__tokenHoldemLastAccountBinding = {
+        account_fingerprint:
+          "8f3c58d35e4a9db2b6a00d54a1a8d88a7ab3e9114f8924a7ce5510d23f9b8af6",
+        peer_verifiable: false,
+      };
+      globalThis.__tokenHoldemBufferedSidecarEvents = [
+        { type: "ready", peer_id: "12D3KooWQA", protocol_version: "1" },
+        {
+          type: "discovery_configured",
+          nodes: ["12D3KooWShDHyPwhHMXs4jvvoimUdLT3zAq5rVfLrPpy34wgvKhF"],
+          namespace: "token-holdem/v1",
+        },
+        {
+          type: "rendezvous_registered",
+          node: "12D3KooWShDHyPwhHMXs4jvvoimUdLT3zAq5rVfLrPpy34wgvKhF",
+          address:
+            "/ip4/172.104.187.120/tcp/4001/p2p/12D3KooWShDHyPwhHMXs4jvvoimUdLT3zAq5rVfLrPpy34wgvKhF",
+          namespace: "token-holdem/v1",
+          ttl_seconds: 120,
+        },
+        {
+          type: "peers_discovered",
+          node: "12D3KooWShDHyPwhHMXs4jvvoimUdLT3zAq5rVfLrPpy34wgvKhF",
+          peers: 0,
+        },
+        {
+          type: "warning",
+          message:
+            "连接失败（旧缓存节点）：Multiple dial errors occurred: Failed to negotiate transport protocol",
+        },
+      ];
+      globalThis.tokenHoldemCommand = () => undefined;
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

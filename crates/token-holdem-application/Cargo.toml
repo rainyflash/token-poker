@@ -1,0 +1,18 @@
+[package]
+name = "token-holdem-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+token-holdem-domain = { path = "../token-holdem-domain" }
+token-holdem-identity = { path = "../token-holdem-identity" }
+
+[dev-dependencies]
+tokio.workspace = true

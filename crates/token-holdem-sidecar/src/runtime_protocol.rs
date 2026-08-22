@@ -1,0 +1,396 @@
+use crate::{decode_command_line, SidecarCommand, MAX_COMMAND_LINE_BYTES};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::VecDeque;
+use thiserror::Error;
+
+pub const RUNTIME_PROTOCOL_VERSION: u16 = 3;
+const EVENT_LIMIT: usize = 4_096;
+const EVENT_BYTES_LIMIT: usize = 8 * 1_024 * 1_024;
+const WORKER_ARGUMENT_LIMIT: usize = 64;
+const BOOTSTRAP_COMMAND_LIMIT: usize = 64;
+
+#[derive(Debug)]
+pub enum RuntimeClientRequest {
+    Attach,
+    ForwardWorkerCommand {
+        encoded: String,
+    },
+    Restart {
+        worker_args: Vec<String>,
+        bootstrap_commands: Vec<String>,
+    },
+    ShutdownRuntime,
+}
+
+#[derive(Debug, Error)]
+pub enum RuntimeProtocolError {
+    #[error("运行时消息超过 {maximum} 字节上限，实际 {actual} 字节")]
+    TooLong { maximum: usize, actual: usize },
+    #[error("运行时消息不是合法 JSON：{0}")]
+    InvalidJson(#[from] serde_json::Error),
+    #[error("运行时消息缺少字符串 type")]
+    MissingType,
+    #[error("运行时协议版本不兼容：收到 {actual}，需要 {expected}")]
+    IncompatibleVersion { expected: u16, actual: u16 },
+    #[error("客户端不得关闭共享牌局内核")]
+    WorkerShutdownForbidden,
+    #[error("运行时重启参数无效：{0}")]
+    InvalidRestart(String),
+    #[error("牌局命令无效：{0}")]
+    InvalidWorkerCommand(String),
+}
+
+#[derive(Debug, Deserialize)]
+struct AttachFrame {
+    protocol_version: u16,
+}
+
+#[derive(Debug, Deserialize)]
+struct RestartFrame {
+    worker_args: Vec<String>,
+    bootstrap_commands: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeEvent {
+    pub generation: u64,
+    pub sequence: u64,
+    pub event: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RuntimeServerFrame {
+    RuntimeAttached {
+        protocol_version: u16,
+        runtime_id: String,
+        worker_pid: Option<u32>,
+        generation: u64,
+        latest_sequence: u64,
+        earliest_sequence: u64,
+        history_truncated: bool,
+    },
+    RuntimeEvent {
+        generation: u64,
+        sequence: u64,
+        event: Value,
+    },
+    RuntimeReplayComplete {
+        generation: u64,
+        latest_sequence: u64,
+    },
+    RuntimeError {
+        code: &'static str,
+        message: String,
+    },
+}
+
+impl From<RuntimeEvent> for RuntimeServerFrame {
+    fn from(value: RuntimeEvent) -> Self {
+        Self::RuntimeEvent {
+            generation: value.generation,
+            sequence: value.sequence,
+            event: value.event,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StoredRuntimeEvent {
+    value: RuntimeEvent,
+    encoded_bytes: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct JournalSnapshot {
+    pub runtime_id: String,
+    pub generation: u64,
+    pub latest_sequence: u64,
+    pub earliest_sequence: u64,
+    pub history_truncated: bool,
+    pub events: Vec<RuntimeEvent>,
+}
+
+#[derive(Debug)]
+pub struct EventJournal {
+    runtime_id: String,
+    generation: u64,
+    generation_first_sequence: u64,
+    latest_sequence: u64,
+    encoded_bytes: usize,
+    events: VecDeque<StoredRuntimeEvent>,
+    pool_active: bool,
+    room_active: bool,
+    hand_active: bool,
+}
+
+impl EventJournal {
+    #[must_use]
+    pub fn new(runtime_id: String) -> Self {
+        Self {
+            runtime_id,
+            generation: 1,
+            generation_first_sequence: 1,
+            latest_sequence: 0,
+            encoded_bytes: 0,
+            events: VecDeque::new(),
+            pool_active: false,
+            room_active: false,
+            hand_active: false,
+        }
+    }
+
+    pub fn append(&mut self, event: Value) -> Result<RuntimeEvent, RuntimeProtocolError> {
+        let event_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or(RuntimeProtocolError::MissingType)?;
+        let encoded_bytes = serde_json::to_vec(&event)?.len();
+        if encoded_bytes > MAX_COMMAND_LINE_BYTES {
+            return Err(RuntimeProtocolError::TooLong {
+                maximum: MAX_COMMAND_LINE_BYTES,
+                actual: encoded_bytes,
+            });
+        }
+        self.update_busy_state(event_type);
+        self.latest_sequence = self.latest_sequence.saturating_add(1);
+        let value = RuntimeEvent {
+            generation: self.generation,
+            sequence: self.latest_sequence,
+            event,
+        };
+        self.events.push_back(StoredRuntimeEvent {
+            value: value.clone(),
+            encoded_bytes,
+        });
+        self.encoded_bytes = self.encoded_bytes.saturating_add(encoded_bytes);
+        while self.events.len() > EVENT_LIMIT || self.encoded_bytes > EVENT_BYTES_LIMIT {
+            if let Some(removed) = self.events.pop_front() {
+                self.encoded_bytes = self.encoded_bytes.saturating_sub(removed.encoded_bytes);
+            } else {
+                break;
+            }
+        }
+        Ok(value)
+    }
+
+    pub fn reset_generation(&mut self) {
+        self.generation = self.generation.saturating_add(1);
+        self.generation_first_sequence = self.latest_sequence.saturating_add(1);
+        self.encoded_bytes = 0;
+        self.events.clear();
+        self.pool_active = false;
+        self.room_active = false;
+        self.hand_active = false;
+    }
+
+    #[must_use]
+    pub fn snapshot(&self) -> JournalSnapshot {
+        let earliest_sequence = self
+            .events
+            .front()
+            .map_or(self.latest_sequence.saturating_add(1), |entry| {
+                entry.value.sequence
+            });
+        JournalSnapshot {
+            runtime_id: self.runtime_id.clone(),
+            generation: self.generation,
+            latest_sequence: self.latest_sequence,
+            earliest_sequence,
+            history_truncated: earliest_sequence > self.generation_first_sequence,
+            events: self
+                .events
+                .iter()
+                .map(|entry| entry.value.clone())
+                .collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_busy(&self) -> bool {
+        self.pool_active || self.room_active || self.hand_active
+    }
+
+    fn update_busy_state(&mut self, event_type: &str) {
+        match event_type {
+            "pool_joined" => self.pool_active = true,
+            "friend_room_created"
+            | "friend_room_joining"
+            | "friend_room_joined"
+            | "room_entered"
+            | "room_snapshot" => self.room_active = true,
+            "pool_cancelled" => self.pool_active = false,
+            "room_closed" => self.room_active = false,
+            "hand_protocol_started" | "hand_ready" | "hand_state" => {
+                self.hand_active = true;
+                self.room_active = true;
+            }
+            "hand_left" => {
+                self.hand_active = false;
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn parse_runtime_client_line(line: &str) -> Result<RuntimeClientRequest, RuntimeProtocolError> {
+    if line.len() > MAX_COMMAND_LINE_BYTES {
+        return Err(RuntimeProtocolError::TooLong {
+            maximum: MAX_COMMAND_LINE_BYTES,
+            actual: line.len(),
+        });
+    }
+    let value: Value = serde_json::from_str(line)?;
+    let message_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or(RuntimeProtocolError::MissingType)?;
+    match message_type {
+        "runtime_attach" => {
+            let frame: AttachFrame = serde_json::from_value(value)?;
+            if frame.protocol_version != RUNTIME_PROTOCOL_VERSION {
+                return Err(RuntimeProtocolError::IncompatibleVersion {
+                    expected: RUNTIME_PROTOCOL_VERSION,
+                    actual: frame.protocol_version,
+                });
+            }
+            Ok(RuntimeClientRequest::Attach)
+        }
+        "runtime_restart" => {
+            let frame: RestartFrame = serde_json::from_value(value)?;
+            validate_worker_args(&frame.worker_args)?;
+            let bootstrap_commands = validate_bootstrap_commands(frame.bootstrap_commands)?;
+            Ok(RuntimeClientRequest::Restart {
+                worker_args: frame.worker_args,
+                bootstrap_commands,
+            })
+        }
+        "runtime_shutdown" => Ok(RuntimeClientRequest::ShutdownRuntime),
+        _ => {
+            let command = decode_command_line(line)
+                .map_err(|error| RuntimeProtocolError::InvalidWorkerCommand(error.to_string()))?;
+            if matches!(command, SidecarCommand::Shutdown) {
+                return Err(RuntimeProtocolError::WorkerShutdownForbidden);
+            }
+            Ok(RuntimeClientRequest::ForwardWorkerCommand {
+                encoded: line.to_owned(),
+            })
+        }
+    }
+}
+
+pub fn validate_worker_args(worker_args: &[String]) -> Result<(), RuntimeProtocolError> {
+    if worker_args.len() > WORKER_ARGUMENT_LIMIT {
+        return Err(RuntimeProtocolError::InvalidRestart(format!(
+            "牌局内核参数不得超过 {WORKER_ARGUMENT_LIMIT} 个"
+        )));
+    }
+    for argument in worker_args {
+        if argument.is_empty() || argument.len() > 4_096 {
+            return Err(RuntimeProtocolError::InvalidRestart(
+                "牌局内核参数为空或过长".to_owned(),
+            ));
+        }
+        if argument == "--daemon" {
+            return Err(RuntimeProtocolError::InvalidRestart(
+                "共享运行时牌局内核不得使用 --daemon".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_bootstrap_commands(
+    commands: Vec<Value>,
+) -> Result<Vec<String>, RuntimeProtocolError> {
+    if commands.len() > BOOTSTRAP_COMMAND_LIMIT {
+        return Err(RuntimeProtocolError::InvalidRestart(format!(
+            "引导命令不得超过 {BOOTSTRAP_COMMAND_LIMIT} 条"
+        )));
+    }
+    commands
+        .into_iter()
+        .map(|command| {
+            let encoded = serde_json::to_string(&command)?;
+            let parsed = decode_command_line(&encoded).map_err(|error| {
+                RuntimeProtocolError::InvalidRestart(format!("引导命令无效：{error}"))
+            })?;
+            if matches!(parsed, SidecarCommand::Shutdown) {
+                return Err(RuntimeProtocolError::InvalidRestart(
+                    "引导命令不得关闭牌局内核".to_owned(),
+                ));
+            }
+            Ok(encoded)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 运行时协议要求先握手并拒绝共享内核退出命令() {
+        assert!(matches!(
+            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":3}"#),
+            Ok(RuntimeClientRequest::Attach)
+        ));
+        assert!(matches!(
+            parse_runtime_client_line(r#"{"type":"shutdown"}"#),
+            Err(RuntimeProtocolError::WorkerShutdownForbidden)
+        ));
+        assert!(matches!(
+            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":1}"#),
+            Err(RuntimeProtocolError::IncompatibleVersion { .. })
+        ));
+    }
+
+    #[test]
+    fn 事件日志跨代次单调编号并投影忙碌状态() {
+        let mut journal = EventJournal::new("runtime-test".to_owned());
+        let first = journal
+            .append(serde_json::json!({"type": "pool_joined", "topic": "x"}))
+            .expect("事件应写入");
+        assert_eq!(first.sequence, 1);
+        assert!(journal.is_busy());
+        journal
+            .append(serde_json::json!({"type": "hand_protocol_started"}))
+            .expect("事件应写入");
+        journal
+            .append(serde_json::json!({"type": "hand_left"}))
+            .expect("事件应写入");
+        journal
+            .append(serde_json::json!({"type": "pool_cancelled"}))
+            .expect("事件应写入");
+        assert!(journal.is_busy());
+        journal
+            .append(serde_json::json!({"type": "room_closed"}))
+            .expect("事件应写入");
+        assert!(!journal.is_busy());
+
+        journal.reset_generation();
+        let next = journal
+            .append(serde_json::json!({"type": "ready"}))
+            .expect("新代次事件应写入");
+        assert_eq!(next.generation, 2);
+        assert_eq!(next.sequence, 6);
+        assert_eq!(journal.snapshot().events.len(), 1);
+    }
+
+    #[test]
+    fn 重启请求校验牌局参数和引导命令() {
+        let parsed = parse_runtime_client_line(
+            r#"{"type":"runtime_restart","worker_args":["--volunteer-consent=granted"],"bootstrap_commands":[{"type":"sync_statistics"}]}"#,
+        )
+        .expect("合法重启请求应通过");
+        assert!(matches!(parsed, RuntimeClientRequest::Restart { .. }));
+
+        assert!(matches!(
+            parse_runtime_client_line(
+                r#"{"type":"runtime_restart","worker_args":["--daemon"],"bootstrap_commands":[]}"#
+            ),
+            Err(RuntimeProtocolError::InvalidRestart(_))
+        ));
+    }
+}

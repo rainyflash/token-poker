@@ -1,0 +1,16 @@
+[package]
+name = "token-holdem-mental-poker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ark-serialize.workspace = true
+ark-std.workspace = true
+blake3.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+token-holdem-domain = { path = "../token-holdem-domain" }
+ziffle.workspace = true

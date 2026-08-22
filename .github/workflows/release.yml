@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Windows plugin
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            plugins/token-holdem/mcp/package-lock.json
+
+      - name: Verify tag matches workspace version
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath Cargo.toml -Raw
+          $match = [regex]::Match(
+            $manifest,
+            '(?ms)^\[workspace\.package\]\s*.*?^version\s*=\s*"(?<version>[^"]+)"'
+          )
+          if (-not $match.Success) {
+            throw 'Could not read the workspace version from Cargo.toml.'
+          }
+          $expectedTag = "v$($match.Groups['version'].Value)"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match $expectedTag."
+          }
+
+      - name: Build release assets
+        shell: pwsh
+        run: python ./scripts/build-plugin.py
+
+      - name: Validate update manifest
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath dist/latest.json -Raw | ConvertFrom-Json
+          if ($manifest.schema_version -ne 1) {
+            throw 'Unexpected update manifest schema.'
+          }
+          if ($manifest.tag -ne $env:GITHUB_REF_NAME) {
+            throw 'Update manifest tag does not match the release tag.'
+          }
+          if ($manifest.repository -ne $env:GITHUB_REPOSITORY) {
+            throw 'Update manifest repository does not match GITHUB_REPOSITORY.'
+          }
+          if (@($manifest.artifacts).Count -ne 1) {
+            throw 'Update manifest must contain exactly one artifact.'
+          }
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: token-poker-plugin-${{ github.ref_name }}-windows-x64
+          if-no-files-found: error
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/latest.json
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $artifacts = Get-ChildItem -LiteralPath dist -File |
+            Where-Object { $_.Name -match '\.(zip|sha256)$' -or $_.Name -eq 'latest.json' } |
+            Sort-Object Name |
+            ForEach-Object { $_.FullName }
+          if ($artifacts.Count -ne 3) {
+            throw "Expected three release assets, found $($artifacts.Count)."
+          }
+          gh release create $env:GITHUB_REF_NAME @artifacts `
+            --verify-tag `
+            --generate-notes `
+            --title "Token Poker $env:GITHUB_REF_NAME" `
+            --notes 'Unsigned Windows x64 Codex plugin. It does not bundle Node.js or inject into Codex. Open it from a new Codex task after installation. SHA-256 verifies byte integrity; it is not publisher authentication.'

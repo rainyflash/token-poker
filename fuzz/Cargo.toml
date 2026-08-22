@@ -1,0 +1,52 @@
+[package]
+name = "token-holdem-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+token-holdem-identity = { path = "../crates/token-holdem-identity" }
+token-holdem-network = { path = "../crates/token-holdem-network" }
+token-holdem-sidecar = { path = "../crates/token-holdem-sidecar" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "control_wire"
+path = "fuzz_targets/control_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "table_pool"
+path = "fuzz_targets/table_pool.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hand_messages"
+path = "fuzz_targets/hand_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_codes"
+path = "fuzz_targets/protocol_codes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ndjson_command"
+path = "fuzz_targets/ndjson_command.rs"
+test = false
+doc = false
+bench = false

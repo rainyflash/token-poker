@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible Token Poker defect. Do not disclose vulnerabilities here.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: For security vulnerabilities, use GitHub private vulnerability reporting instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: Token Poker version
+      placeholder: 0.3.0
+    validations:
+      required: true
+  - type: input
+    id: codex-version
+    attributes:
+      label: Codex desktop version
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Installation or update
+        - Official Token usage
+        - Matchmaking or private room
+        - Mental Poker or game rules
+        - Identity or recovery
+        - Volunteer networking
+        - User interface or localization
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest reliable sequence and redact user data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed private keys, recovery phrases, raw account responses, and personal data.
+          required: true

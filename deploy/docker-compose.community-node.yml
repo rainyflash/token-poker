@@ -1,0 +1,50 @@
+name: token-holdem-community
+
+services:
+  community-node:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.community-node
+    image: token-holdem-community-node:local
+    restart: unless-stopped
+    init: true
+    command:
+      - --archive-dir=/data
+      - --node-key-file=/data/libp2p-identity-key
+      - --rendezvous-server
+      - --relay-server
+      - --public-node
+      - --daemon
+      - --volunteer-consent=granted
+      - --network-cost=unmetered
+      - --power-source=ac
+      - --listen=/ip4/0.0.0.0/tcp/4001
+      - --listen=/ip4/0.0.0.0/udp/4001/quic-v1
+      - --external-address=${TOKEN_POKER_EXTERNAL_TCP_ADDRESS:?Set TOKEN_POKER_EXTERNAL_TCP_ADDRESS in deploy/community-node.env}
+      - --external-address=${TOKEN_POKER_EXTERNAL_QUIC_ADDRESS:?Set TOKEN_POKER_EXTERNAL_QUIC_ADDRESS in deploy/community-node.env}
+    ports:
+      - "4001:4001/tcp"
+      - "4001:4001/udp"
+    volumes:
+      - community-node-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /data/libp2p-identity-key"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  community-node-data:

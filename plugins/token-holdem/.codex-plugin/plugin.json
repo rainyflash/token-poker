@@ -1,0 +1,37 @@
+{
+  "name": "token-holdem",
+  "version": "0.3.0",
+  "description": "Peer-to-peer Mental Poker running inside Codex.",
+  "author": {
+    "name": "Token Poker Contributors"
+  },
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "poker",
+    "mental-poker",
+    "p2p",
+    "codex",
+    "game"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Token Poker",
+    "shortDescription": "Play peer-to-peer poker with lifetime Token as per-table chips.",
+    "longDescription": "Token Poker runs a complete table inside Codex. Its local Rust core handles peer-to-peer matchmaking, private rooms, Mental Poker, co-signed hand receipts, and volunteer Relay. Lifetime Token comes directly from the official Codex App Server account-usage API; it is official server-side usage data, not a balance proof that opponents can verify independently.",
+    "developerName": "Token Poker Contributors",
+    "category": "Games",
+    "capabilities": [
+      "Interactive",
+      "Local MCP",
+      "Peer-to-peer"
+    ],
+    "defaultPrompt": [
+      "Open Token Poker and read my official lifetime Token",
+      "Open the Token Poker table",
+      "Create a private room in Token Poker"
+    ],
+    "brandColor": "#0A84FF",
+    "composerIcon": "./assets/composerIcon.svg"
+  }
+}

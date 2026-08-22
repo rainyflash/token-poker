@@ -1,0 +1,31 @@
+{
+  "mcpServers": {
+    "token_holdem": {
+      "title": "Token Poker",
+      "description": "Local peer-to-peer Mental Poker and official Codex account-usage bridge.",
+      "command": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "call",
+        "./scripts/launch-mcp.cmd",
+        "./mcp/server.bundle.mjs"
+      ],
+      "cwd": ".",
+      "env_vars": [
+        "PATH",
+        "LOCALAPPDATA",
+        "USERPROFILE",
+        "HOME",
+        "CODEX_MCP_NODE_PATH",
+        "CODEX_BROWSER_USE_NODE_PATH",
+        "CODEX_ELECTRON_RESOURCES_PATH",
+        "CODEX_CLI_PATH",
+        "TOKEN_HOLDEM_SIDECAR_PATH"
+      ],
+      "startup_timeout_sec": 20,
+      "tool_timeout_sec": 60
+    }
+  }
+}

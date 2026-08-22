@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "namespace": "token-holdem/v1",
+  "nodes": [
+    {
+      "name": "singapore-primary",
+      "roles": [
+        "rendezvous",
+        "relay",
+        "archive"
+      ],
+      "addresses": [
+        "/ip4/172.104.187.120/tcp/4001/p2p/12D3KooWShDHyPwhHMXs4jvvoimUdLT3zAq5rVfLrPpy34wgvKhF",
+        "/ip4/172.104.187.120/udp/4001/quic-v1/p2p/12D3KooWShDHyPwhHMXs4jvvoimUdLT3zAq5rVfLrPpy34wgvKhF"
+      ]
+    }
+  ]
+}

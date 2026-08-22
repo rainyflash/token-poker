@@ -1,0 +1,243 @@
+@import "tailwindcss";
+@import "./shared/styles/codex-tokens.css";
+
+@theme {
+  --font-sans: var(--codex-font-sans);
+  --font-mono: var(--codex-font-mono);
+}
+
+:root {
+  color-scheme: light;
+  font-family: var(--font-sans);
+  background: var(--codex-surface);
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.token-holdem-app {
+  --canvas: var(--codex-surface);
+  --rail: var(--codex-shell-rail);
+  --rail-selected: var(--codex-shell-rail-selected);
+  --surface-subtle: var(--codex-surface-under);
+  --ink: var(--codex-text);
+  --muted: var(--codex-text-secondary);
+  --muted-light: var(--codex-text-tertiary);
+  --line: var(--codex-border);
+  --line-strong: var(--codex-border-strong);
+  --focus-ring: var(--codex-focus);
+  isolation: isolate;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.token-holdem-app ::selection {
+  background: var(--codex-blue-50);
+}
+
+.token-holdem-app * {
+  scrollbar-color: var(--codex-gray-200) transparent;
+  scrollbar-width: thin;
+}
+
+.token-holdem-app :is(input, textarea):focus-visible {
+  border-color: var(--codex-blue-300);
+  box-shadow: 0 0 0 2px var(--codex-blue-50);
+  outline: none;
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  .token-holdem-app :where([class*="rounded-"]:not([class*="rounded-full"])) {
+    corner-shape: superellipse(1.5);
+  }
+}
+
+.table-stage-frame {
+  bottom: clamp(170px, 16vh, 230px);
+  top: 50px;
+}
+
+.poker-stage {
+  container-name: poker-stage;
+  container-type: size;
+}
+
+.poker-geometry {
+  aspect-ratio: 1.78;
+  width: min(72cqw, 1340px, calc(100cqh * 1.78));
+}
+
+.poker-table,
+.poker-table-felt {
+  border-radius: 42% / 50%;
+}
+
+.poker-table {
+  border: 1px solid #c8d0ca;
+  background: #e5eae6;
+  box-shadow:
+    0 24px 72px rgba(28, 37, 31, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+.poker-table-felt {
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  background: #f1f3f0;
+  box-shadow:
+    inset 0 0 0 1px rgba(202, 209, 204, 0.55),
+    inset 0 24px 56px rgba(74, 88, 78, 0.025);
+}
+
+.player-seat-anchor {
+  transform: translate(-50%, -50%);
+}
+
+.seat-top {
+  left: 50%;
+  top: 0;
+}
+
+.seat-upper-left {
+  left: 1.8%;
+  top: 22%;
+}
+
+.seat-lower-left {
+  left: 1.8%;
+  top: 74%;
+}
+
+.seat-upper-right {
+  left: 98.2%;
+  top: 22%;
+}
+
+.seat-lower-right {
+  left: 98.2%;
+  top: 74%;
+}
+
+@media (max-width: 1180px) {
+  .player-seat > div:nth-child(2) {
+    min-width: 132px;
+  }
+}
+
+@media (max-width: 920px) {
+  .action-console {
+    width: min(620px, calc(100% - 28px));
+  }
+}
+
+@media (max-height: 720px) {
+  .table-stage-frame {
+    bottom: 142px;
+    top: 42px;
+  }
+
+  .action-console {
+    bottom: 10px;
+  }
+}
+
+@container poker-stage (max-height: 560px) {
+  .playing-card {
+    height: 68px;
+    width: 48px;
+  }
+
+  .player-seat .playing-card {
+    height: 48px;
+    width: 34px;
+  }
+
+  .player-seat > div:nth-child(2) {
+    min-width: 142px;
+  }
+
+  .pot-indicator {
+    top: 30%;
+  }
+
+  .proof-indicator {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .table-stage-frame {
+    bottom: 194px;
+    top: 78px;
+  }
+
+  .poker-geometry {
+    width: 80cqw;
+  }
+
+  .seat-upper-left,
+  .seat-lower-left {
+    left: 18%;
+  }
+
+  .seat-upper-right,
+  .seat-lower-right {
+    left: 82%;
+  }
+
+  .player-seat-card {
+    min-width: 112px !important;
+    gap: 6px;
+    padding-right: 8px;
+  }
+
+  .player-seat-avatar {
+    height: 28px;
+    width: 28px;
+  }
+
+  .player-seat .playing-card {
+    height: 40px;
+    width: 28px;
+  }
+
+  .player-seat-card p:first-child {
+    max-width: 66px;
+    font-size: 10px;
+  }
+
+  .player-seat-card p:last-child {
+    font-size: 9px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

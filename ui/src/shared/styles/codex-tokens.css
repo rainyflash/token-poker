@@ -1,0 +1,73 @@
+:root {
+  --codex-font-sans: "OpenAI Sans", "OpenAI Sans Variable Scripts", "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --codex-font-mono: ui-monospace, "SFMono-Regular", "SF Mono", "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --codex-gray-0: #fff;
+  --codex-gray-50: #f9f9f9;
+  --codex-gray-75: #f3f3f3;
+  --codex-gray-100: #ededed;
+  --codex-gray-150: #dfdfdf;
+  --codex-gray-200: #cdcdcd;
+  --codex-gray-300: #afafaf;
+  --codex-gray-400: #8f8f8f;
+  --codex-gray-500: #5d5d5d;
+  --codex-gray-600: #414141;
+  --codex-gray-800: #212121;
+  --codex-gray-900: #181818;
+  --codex-gray-1000: #0d0d0d;
+
+  --codex-blue-50: #e5f3ff;
+  --codex-blue-100: #99ceff;
+  --codex-blue-300: #339cff;
+  --codex-blue-400: #0285ff;
+  --codex-blue-500: #0169cc;
+  --codex-green-25: #edfaf2;
+  --codex-green-500: #00a240;
+  --codex-orange-25: #fff5f0;
+  --codex-orange-500: #e25507;
+  --codex-red-25: #fff0f0;
+  --codex-red-500: #e02e2a;
+
+  --codex-surface: var(--codex-gray-0);
+  --codex-surface-under: var(--codex-gray-50);
+  --codex-surface-soft: var(--codex-gray-75);
+  --codex-shell-rail: #eff4f9;
+  --codex-shell-rail-selected: #e2e9ed;
+  --codex-text: #1a1c1f;
+  --codex-text-secondary: var(--codex-gray-500);
+  --codex-text-tertiary: var(--codex-gray-400);
+  --codex-border: color-mix(in oklab, var(--codex-text) 8%, transparent);
+  --codex-border-strong: color-mix(in oklab, var(--codex-text) 12%, transparent);
+  --codex-focus: color-mix(in oklab, var(--codex-blue-300) 70%, transparent);
+
+  --codex-spacing: 0.25rem;
+  --codex-radius-xs: 0.25rem;
+  --codex-radius-sm: 0.375rem;
+  --codex-radius-md: 0.5rem;
+  --codex-radius-lg: 0.625rem;
+  --codex-radius-xl: 0.75rem;
+  --codex-radius-2xl: 1rem;
+  --codex-radius-3xl: 1.25rem;
+  --codex-radius-full: 9999px;
+
+  --codex-shadow-sm: 0 1px 2px -1px #00000014;
+  --codex-shadow-md: 0 2px 4px -1px #00000014;
+  --codex-shadow-lg: 0 4px 8px -2px #0000001a;
+  --codex-shadow-xl: 0 8px 16px -4px #0000001f;
+  --codex-shadow-2xl: 0 16px 32px -8px #00000030;
+  --codex-ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  :root {
+    --codex-radius-md: 0.625rem;
+    --codex-radius-lg: 0.78125rem;
+    --codex-radius-xl: 0.9375rem;
+    --codex-radius-2xl: 1.25rem;
+    --codex-radius-3xl: 1.5625rem;
+  }
+
+  .codex-corner {
+    corner-shape: superellipse(1.5);
+  }
+}

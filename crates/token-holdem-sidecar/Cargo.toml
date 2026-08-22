@@ -1,0 +1,27 @@
+[package]
+name = "token-holdem-sidecar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+blake3.workspace = true
+cbor4ii.workspace = true
+ed25519-dalek.workspace = true
+futures.workspace = true
+hex.workspace = true
+libp2p.workspace = true
+rand_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "process", "time"] }
+tokio-util.workspace = true
+zeroize.workspace = true
+token-holdem-application = { path = "../token-holdem-application" }
+token-holdem-domain = { path = "../token-holdem-domain" }
+token-holdem-identity = { path = "../token-holdem-identity" }
+token-holdem-mental-poker = { path = "../token-holdem-mental-poker" }
+token-holdem-network = { path = "../token-holdem-network" }

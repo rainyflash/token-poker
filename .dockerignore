@@ -1,0 +1,10 @@
+.git
+.github
+.playwright-cli
+dist
+output
+target
+ui/dist
+ui/node_modules
+*.log
+*.zip

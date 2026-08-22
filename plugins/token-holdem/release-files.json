@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "files": [
+    "assets/composerIcon.svg",
+    "bin/token-holdem-runtime.exe",
+    "bin/token-holdem-sidecar.exe",
+    "config/community-nodes.json",
+    "mcp/server.bundle.mjs",
+    "mcp/vendor/ext-apps-app-with-deps.js",
+    "scripts/launch-mcp.cmd",
+    "skills/token-holdem/SKILL.md",
+    "ui/token-holdem.css",
+    "ui/token-holdem.js",
+    "LICENSE-APACHE",
+    "LICENSE-MIT"
+  ]
+}
