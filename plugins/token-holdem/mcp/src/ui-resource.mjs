@@ -259,7 +259,7 @@ function buildHostBridge(version) {
     const updateTools = {
       check_update: ["token_holdem_check_update", "checking", 45_000],
       prepare_update: ["token_holdem_prepare_update", "downloading", 5 * 60_000],
-      install_update: ["token_holdem_install_update", "installing", 45_000],
+      install_update: ["token_holdem_install_update", "installing", 6 * 60_000],
     };
     if (Object.prototype.hasOwnProperty.call(updateTools, command?.type)) {
       const [toolName, pendingPhase, timeoutMs] = updateTools[command.type];

@@ -276,7 +276,7 @@ registerAppTool(
     const status = await updates.install();
     return toolResult(
       status.phase === "restart_required"
-        ? "The verified updater started. Restart Codex after installation finishes."
+        ? "Token Poker was installed and verified. Restart Codex to load the new version."
         : `Could not start the Token Poker update: ${status.error}`,
       currentPayload("update_install"),
     );

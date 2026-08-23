@@ -60,6 +60,49 @@ test("fails closed when install is requested before verification", async () => {
   assert.match(service.snapshot.error, /not been downloaded and verified/u);
 });
 
+test("does not request a restart before the installer confirms completion", async () => {
+  let confirmInstall;
+  const installConfirmed = new Promise((resolveInstall) => {
+    confirmInstall = resolveInstall;
+  });
+  const service = new UpdateService({
+    currentVersion: "0.4.0",
+    releaseClient: { fetchLatestManifest: async () => manifestForRelease(RELEASE) },
+    packageStager: {
+      stage: async () => ({ archivePath: "archive.zip", helperPath: "apply-update.ps1" }),
+    },
+    installerLauncher: { launch: async () => installConfirmed },
+  });
+
+  await service.check();
+  await service.prepare();
+  const installation = service.install();
+  await new Promise((resolveTurn) => setImmediate(resolveTurn));
+  assert.equal(service.snapshot.phase, "installing");
+  confirmInstall();
+  assert.equal((await installation).phase, "restart_required");
+});
+
+test("reports installer verification failures instead of requesting a restart", async () => {
+  const service = new UpdateService({
+    currentVersion: "0.4.0",
+    releaseClient: { fetchLatestManifest: async () => manifestForRelease(RELEASE) },
+    packageStager: {
+      stage: async () => ({ archivePath: "archive.zip", helperPath: "apply-update.ps1" }),
+    },
+    installerLauncher: {
+      launch: async () => {
+        throw new Error("Codex still reports version 0.4.0");
+      },
+    },
+  });
+
+  await service.check();
+  await service.prepare();
+  assert.equal((await service.install()).phase, "error");
+  assert.match(service.snapshot.error, /still reports version 0\.4\.0/u);
+});
+
 test("downloads exactly the declared bytes and rejects a digest mismatch", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "token-poker-update-test-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

@@ -55,6 +55,7 @@ jobs:
           ./scripts/test-installer-entrypoint.ps1
           ./scripts/test-codex-runtime-resolution.ps1
           python ./scripts/build-plugin.py
+          ./scripts/install-plugin.ps1 -ValidateOnly
 
       - name: Validate update manifest
         shell: pwsh

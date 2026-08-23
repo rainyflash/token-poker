@@ -2,6 +2,15 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.4] - 2026-08-23
+
+### Fixed
+
+- Wait for the isolated updater to finish and verify its version-matched result before asking the user to restart Codex.
+- Store every verified marketplace payload in a persistent content-addressed directory instead of registering an extracted download folder.
+- Verify the Codex marketplace root, installed plugin version, source path, and cache manifest before reporting a successful update.
+- Keep the running MCP alive during cross-version installation so it can observe and report updater failures.
+
 ## [0.4.3] - 2026-08-23
 
 ### Added
@@ -85,6 +94,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.4]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.4
 [0.4.3]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.3
 [0.4.2]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.2
 [0.4.1]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.1

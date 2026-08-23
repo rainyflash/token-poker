@@ -35,6 +35,8 @@ export class FileSystemPackageStager {
     const archivePath = join(stageDirectory, release.artifact.name);
     const helperPath = join(stageDirectory, "apply-update.ps1");
     const manifestPath = join(stageDirectory, "latest.json");
+    const resultPath = join(stageDirectory, "update-result.json");
+    const logPath = join(stageDirectory, "install.log");
 
     if (!(await fileMatches(archivePath, release.artifact))) {
       await downloadVerifiedArtifact({
@@ -43,13 +45,23 @@ export class FileSystemPackageStager {
         fetchImpl: this.#fetch,
       });
     }
+    await Promise.all([
+      rm(resultPath, { force: true }),
+      rm(logPath, { force: true }),
+    ]);
     await copyFile(join(this.#pluginRoot, "scripts", "apply-update.ps1"), helperPath);
     await writeFile(
       manifestPath,
       `${JSON.stringify(serializeRelease(release), null, 2)}\n`,
       "utf8",
     );
-    return Object.freeze({ stageDirectory, archivePath, helperPath });
+    return Object.freeze({
+      stageDirectory,
+      archivePath,
+      helperPath,
+      resultPath,
+      logPath,
+    });
   }
 }
 

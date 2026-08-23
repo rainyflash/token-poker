@@ -232,8 +232,11 @@ try {
     }
     "Starting Token Poker $ExpectedVersion update from parent process $ParentProcessId." |
         Set-Content -LiteralPath $logPath -Encoding UTF8
-    & $installerPath -Upgrade *>&1 | Tee-Object -FilePath $logPath -Append
-    Write-UpdateResult -Status 'succeeded' -Message 'Token Poker was updated. Restart Codex.'
+    & $installerPath -Upgrade -ExpectedVersion $ExpectedVersion *>&1 |
+        Tee-Object -FilePath $logPath -Append
+    Write-UpdateResult `
+        -Status 'succeeded' `
+        -Message "Token Poker $ExpectedVersion was installed and verified. Restart Codex."
 }
 catch {
     $failureMessage = $_.Exception.Message

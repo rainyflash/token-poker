@@ -2,7 +2,9 @@
 param(
     [switch]$Upgrade,
     [switch]$ValidateOnly,
-    [string]$LogPath
+    [string]$LogPath,
+    [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
+    [AllowNull()][string]$ExpectedVersion
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,7 +28,7 @@ if (-not (Test-Path -LiteralPath $runtimeResolverPath -PathType Leaf)) {
 }
 . $runtimeResolverPath
 
-$marketplaceRoot = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.agents\plugins\marketplace.json')) {
+$packageMarketplaceRoot = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.agents\plugins\marketplace.json')) {
     (Resolve-Path $PSScriptRoot).Path
 }
 else {
@@ -34,12 +36,16 @@ else {
 }
 $marketplaceName = 'token-holdem-community'
 $pluginSelector = "token-holdem@$marketplaceName"
-$pluginSourceDirectory = Join-Path $marketplaceRoot 'plugins\token-holdem'
+$packagePluginSourceDirectory = Join-Path $packageMarketplaceRoot 'plugins\token-holdem'
+$pluginSourceDirectory = $packagePluginSourceDirectory
 $pluginManifestPath = Join-Path $pluginSourceDirectory '.codex-plugin\plugin.json'
 $pluginVersion = (
     Get-Content -LiteralPath $pluginManifestPath -Raw -Encoding UTF8 |
         ConvertFrom-Json
 ).version
+if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and $pluginVersion -cne $ExpectedVersion) {
+    throw "Installer version $pluginVersion does not match the requested version $ExpectedVersion."
+}
 
 function Get-CodexHomeRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
@@ -120,7 +126,7 @@ function Invoke-CodexCommand {
     }
 }
 
-function Test-MarketplaceRegistered {
+function Get-MarketplaceRegistrationRoot {
     param([Parameter(Mandatory)][string]$ExecutablePath)
 
     $output = @()
@@ -139,12 +145,56 @@ function Test-MarketplaceRegistered {
     }
 
     foreach ($line in $output) {
-        $columns = ([string]$line).Trim() -split '\s+', 2
-        if ($columns.Count -gt 0 -and $columns[0] -ceq $marketplaceName) {
-            return $true
+        $columns = ([string]$line).Trim() -split '\s{2,}', 2
+        if ($columns.Count -eq 2 -and $columns[0] -ceq $marketplaceName) {
+            return [string]$columns[1]
         }
     }
-    return $false
+    return $null
+}
+
+function Get-InstalledPluginRegistration {
+    param([Parameter(Mandatory)][string]$ExecutablePath)
+
+    $output = @()
+    $exitCode = 1
+    $originalErrorPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $ExecutablePath plugin list 2>&1)
+        $exitCode = [int]$LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $originalErrorPreference
+    }
+    if ($exitCode -ne 0) {
+        throw 'Could not inspect installed Codex plugins.'
+    }
+
+    foreach ($line in $output) {
+        $columns = ([string]$line).Trim() -split '\s{2,}', 4
+        if ($columns.Count -eq 4 -and $columns[0] -ceq $pluginSelector) {
+            return [pscustomobject]@{
+                Status = [string]$columns[1]
+                Version = [string]$columns[2]
+                Path = [string]$columns[3]
+            }
+        }
+    }
+    return $null
+}
+
+function Get-ComparablePath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )
+    if ($resolvedPath.StartsWith('\\?\', [System.StringComparison]::Ordinal)) {
+        return $resolvedPath.Substring(4)
+    }
+    return $resolvedPath
 }
 
 function Test-CodexCommand {
@@ -197,7 +247,9 @@ function Copy-VerifiedManifest {
 }
 
 function Get-ReleasePayloadFiles {
-    $payloadManifestPath = Join-Path $pluginSourceDirectory 'release-files.json'
+    param([Parameter(Mandatory)][string]$SourceDirectory)
+
+    $payloadManifestPath = Join-Path $SourceDirectory 'release-files.json'
     if (-not (Test-Path -LiteralPath $payloadManifestPath -PathType Leaf)) {
         throw "Plugin payload manifest does not exist: $payloadManifestPath"
     }
@@ -223,20 +275,177 @@ function Get-ReleasePayloadFiles {
         if (-not $seenPaths.Add([string]$relativePath)) {
             throw "Duplicate plugin payload path: $relativePath"
         }
-        $sourceFile = Join-Path $pluginSourceDirectory $relativePath
+        $sourceFile = Join-Path $SourceDirectory $relativePath
         if (-not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
             throw "Plugin source file does not exist: $sourceFile"
         }
     }
 
     foreach ($relativePath in @('.mcp.json', '.codex-plugin/plugin.json')) {
-        $manifestPath = Join-Path $pluginSourceDirectory $relativePath
+        $manifestPath = Join-Path $SourceDirectory $relativePath
         if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
             throw "Plugin manifest does not exist: $manifestPath"
         }
         Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null
     }
     return [string[]]$payloadFiles
+}
+
+function Get-MarketplacePayloadFingerprint {
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$SourceDirectory,
+        [Parameter(Mandatory)][string[]]$PayloadFiles
+    )
+
+    $relativePaths = @('.mcp.json', '.codex-plugin/plugin.json', 'release-files.json') + $PayloadFiles
+    $marketplaceDigest = (
+        Get-FileHash -LiteralPath (Join-Path $SourceRoot '.agents\plugins\marketplace.json') -Algorithm SHA256
+    ).Hash
+    $records = @(
+        ".agents/plugins/marketplace.json`t$($marketplaceDigest.ToLowerInvariant())"
+    )
+    $records += foreach ($relativePath in ($relativePaths | Sort-Object -CaseSensitive)) {
+        $digest = (Get-FileHash -LiteralPath (Join-Path $SourceDirectory $relativePath) -Algorithm SHA256).Hash
+        "plugins/token-holdem/$relativePath`t$($digest.ToLowerInvariant())"
+    }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($records -join "`n"))
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digestBytes = $hasher.ComputeHash($bytes)
+    }
+    finally {
+        $hasher.Dispose()
+    }
+    return ([System.BitConverter]::ToString($digestBytes).Replace('-', '').ToLowerInvariant()).Substring(0, 16)
+}
+
+function Assert-MarketplacePayloadMatches {
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$TargetRoot,
+        [Parameter(Mandatory)][string[]]$PayloadFiles
+    )
+
+    $relativePaths = @(
+        '.agents/plugins/marketplace.json',
+        'plugins/token-holdem/.mcp.json',
+        'plugins/token-holdem/.codex-plugin/plugin.json',
+        'plugins/token-holdem/release-files.json'
+    ) + @($PayloadFiles | ForEach-Object { "plugins/token-holdem/$_" })
+    foreach ($relativePath in $relativePaths) {
+        $windowsPath = $relativePath.Replace('/', '\')
+        $sourceFile = Join-Path $SourceRoot $windowsPath
+        $targetFile = Join-Path $TargetRoot $windowsPath
+        if (-not (Test-Path -LiteralPath $targetFile -PathType Leaf)) {
+            throw "Persistent marketplace file is missing: $relativePath"
+        }
+        $sourceDigest = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
+        $targetDigest = (Get-FileHash -LiteralPath $targetFile -Algorithm SHA256).Hash
+        if ($sourceDigest -cne $targetDigest) {
+            throw "Persistent marketplace file failed SHA-256 verification: $relativePath"
+        }
+    }
+}
+
+function Publish-PersistentMarketplace {
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$SourceDirectory,
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string[]]$PayloadFiles,
+        [Parameter(Mandatory)][string]$MarketplaceBase
+    )
+
+    $fingerprint = Get-MarketplacePayloadFingerprint `
+        -SourceRoot $SourceRoot `
+        -SourceDirectory $SourceDirectory `
+        -PayloadFiles $PayloadFiles
+    $marketplaceBase = [System.IO.Path]::GetFullPath($MarketplaceBase)
+    $targetRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $marketplaceBase "v$Version-$fingerprint")
+    )
+    Assert-ChildDirectory -ParentDirectory $marketplaceBase -ChildDirectory $targetRoot
+    New-Item -ItemType Directory -Path $marketplaceBase -Force | Out-Null
+
+    if ((Get-ComparablePath -Path $SourceRoot) -ceq (Get-ComparablePath -Path $targetRoot)) {
+        return $targetRoot
+    }
+    if (Test-Path -LiteralPath $targetRoot -PathType Container) {
+        Assert-MarketplacePayloadMatches `
+            -SourceRoot $SourceRoot `
+            -TargetRoot $targetRoot `
+            -PayloadFiles $PayloadFiles
+        return $targetRoot
+    }
+
+    $partialRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $marketplaceBase ".v$Version-$fingerprint.partial-$PID-$([Guid]::NewGuid().ToString('N'))")
+    )
+    Assert-ChildDirectory -ParentDirectory $marketplaceBase -ChildDirectory $partialRoot
+    try {
+        Copy-VerifiedFile `
+            -SourceFile (Join-Path $SourceRoot '.agents\plugins\marketplace.json') `
+            -TargetFile (Join-Path $partialRoot '.agents\plugins\marketplace.json')
+        foreach ($relativePath in @('.mcp.json', '.codex-plugin/plugin.json', 'release-files.json') + $PayloadFiles) {
+            Copy-VerifiedFile `
+                -SourceFile (Join-Path $SourceDirectory $relativePath) `
+                -TargetFile (Join-Path $partialRoot "plugins\token-holdem\$relativePath")
+        }
+        Assert-MarketplacePayloadMatches `
+            -SourceRoot $SourceRoot `
+            -TargetRoot $partialRoot `
+            -PayloadFiles $PayloadFiles
+        try {
+            Move-Item -LiteralPath $partialRoot -Destination $targetRoot
+        }
+        catch {
+            if (-not (Test-Path -LiteralPath $targetRoot -PathType Container)) {
+                throw
+            }
+            Assert-MarketplacePayloadMatches `
+                -SourceRoot $SourceRoot `
+                -TargetRoot $targetRoot `
+                -PayloadFiles $PayloadFiles
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $partialRoot -PathType Container) {
+            Assert-ChildDirectory -ParentDirectory $marketplaceBase -ChildDirectory $partialRoot
+            Remove-Item -LiteralPath $partialRoot -Recurse -Force
+        }
+    }
+    return $targetRoot
+}
+
+function Assert-InstalledPluginState {
+    param(
+        [Parameter(Mandatory)][string]$ExecutablePath,
+        [Parameter(Mandatory)][string]$ExpectedMarketplaceRoot,
+        [Parameter(Mandatory)][string]$ExpectedPluginDirectory,
+        [Parameter(Mandatory)][string]$Version
+    )
+
+    $registeredRoot = Get-MarketplaceRegistrationRoot -ExecutablePath $ExecutablePath
+    if ($null -eq $registeredRoot -or
+        (Get-ComparablePath -Path $registeredRoot) -cne (Get-ComparablePath -Path $ExpectedMarketplaceRoot)) {
+        throw 'Codex marketplace registration did not switch to the verified Token Poker package.'
+    }
+    $registration = Get-InstalledPluginRegistration -ExecutablePath $ExecutablePath
+    if ($null -eq $registration -or
+        $registration.Version -cne $Version -or
+        (Get-ComparablePath -Path $registration.Path) -cne (Get-ComparablePath -Path $ExpectedPluginDirectory)) {
+        throw "Codex still reports an older Token Poker plugin instead of version $Version."
+    }
+
+    $cacheManifestPath = Join-Path (Get-PluginCacheDirectory -Version $Version) '.codex-plugin\plugin.json'
+    $cacheVersion = (
+        Get-Content -LiteralPath $cacheManifestPath -Raw -Encoding UTF8 |
+            ConvertFrom-Json
+    ).version
+    if ($cacheVersion -cne $Version) {
+        throw "Token Poker cache manifest does not report version $Version."
+    }
 }
 
 function Complete-PluginCacheManifests {
@@ -328,8 +537,36 @@ function Stop-TokenPokerCacheProcesses {
     }
 }
 
-$payloadFiles = Get-ReleasePayloadFiles
+$payloadFiles = Get-ReleasePayloadFiles -SourceDirectory $packagePluginSourceDirectory
 if ($ValidateOnly) {
+    $validationParent = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+    $validationBase = [System.IO.Path]::GetFullPath(
+        (Join-Path $validationParent "token-poker-marketplace-validation-$([Guid]::NewGuid().ToString('N'))")
+    )
+    Assert-ChildDirectory -ParentDirectory $validationParent -ChildDirectory $validationBase
+    try {
+        $firstRoot = Publish-PersistentMarketplace `
+            -SourceRoot $packageMarketplaceRoot `
+            -SourceDirectory $packagePluginSourceDirectory `
+            -Version $pluginVersion `
+            -PayloadFiles $payloadFiles `
+            -MarketplaceBase $validationBase
+        $secondRoot = Publish-PersistentMarketplace `
+            -SourceRoot $packageMarketplaceRoot `
+            -SourceDirectory $packagePluginSourceDirectory `
+            -Version $pluginVersion `
+            -PayloadFiles $payloadFiles `
+            -MarketplaceBase $validationBase
+        if ((Get-ComparablePath -Path $firstRoot) -cne (Get-ComparablePath -Path $secondRoot)) {
+            throw 'Persistent marketplace publication is not deterministic.'
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $validationBase -PathType Container) {
+            Assert-ChildDirectory -ParentDirectory $validationParent -ChildDirectory $validationBase
+            Remove-Item -LiteralPath $validationBase -Recurse -Force
+        }
+    }
     Write-Output "Token Poker $pluginVersion installer payload is valid."
     return
 }
@@ -359,21 +596,40 @@ if (-not (Test-CodexCommand -ExecutablePath $codexCommandPath)) {
     throw 'The official Codex desktop executable could not start from the installer workspace.'
 }
 
-$marketplaceRegistered = Test-MarketplaceRegistered -ExecutablePath $codexCommandPath
+if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    throw 'LOCALAPPDATA is required to persist the Token Poker marketplace.'
+}
+$persistentMarketplaceBase = [System.IO.Path]::GetFullPath(
+    (Join-Path $env:LOCALAPPDATA 'TokenHoldem\marketplace')
+)
+$marketplaceRoot = Publish-PersistentMarketplace `
+    -SourceRoot $packageMarketplaceRoot `
+    -SourceDirectory $packagePluginSourceDirectory `
+    -Version $pluginVersion `
+    -PayloadFiles $payloadFiles `
+    -MarketplaceBase $persistentMarketplaceBase
+$pluginSourceDirectory = Join-Path $marketplaceRoot 'plugins\token-holdem'
+
+$registeredMarketplaceRoot = Get-MarketplaceRegistrationRoot -ExecutablePath $codexCommandPath
+$marketplaceRegistered = $null -ne $registeredMarketplaceRoot
+$installedPlugin = Get-InstalledPluginRegistration -ExecutablePath $codexCommandPath
 $effectiveUpgrade = $Upgrade -or $marketplaceRegistered
 $pluginCacheDirectory = Get-PluginCacheDirectory -Version $pluginVersion
 $repairInPlace = $effectiveUpgrade -and
     $marketplaceRegistered -and
+    $null -ne $installedPlugin -and
+    $installedPlugin.Version -ceq $pluginVersion -and
+    (Get-ComparablePath -Path $registeredMarketplaceRoot) -ceq (Get-ComparablePath -Path $marketplaceRoot) -and
+    (Get-ComparablePath -Path $installedPlugin.Path) -ceq (Get-ComparablePath -Path $pluginSourceDirectory) -and
     (Test-Path -LiteralPath $pluginCacheDirectory -PathType Container)
 
-if ($effectiveUpgrade) {
-    # Windows locks running sidecar and MCP payloads. Both cross-version upgrades
-    # and same-version repairs must stop only the Token Poker process tree first.
+if ($repairInPlace) {
     Stop-TokenPokerCacheProcesses
 }
 
 if ($marketplaceRegistered -and -not $repairInPlace) {
-    if ((Invoke-CodexCommand -ExecutablePath $codexCommandPath -Arguments @('plugin', 'remove', $pluginSelector)) -ne 0) {
+    if ($null -ne $installedPlugin -and
+        (Invoke-CodexCommand -ExecutablePath $codexCommandPath -Arguments @('plugin', 'remove', $pluginSelector)) -ne 0) {
         Write-Warning 'The current Codex task still locks the old plugin cache. Registration will continue, and Codex will clean the old cache after exit.'
     }
     if ((Invoke-CodexCommand -ExecutablePath $codexCommandPath -Arguments @('plugin', 'marketplace', 'remove', $marketplaceName)) -ne 0) {
@@ -395,6 +651,11 @@ Sync-PluginCachePayload -Version $pluginVersion -PayloadFiles $payloadFiles
 $runtimeBytes = Prepare-OfficialUsageRuntime `
     -Version $pluginVersion `
     -SourceFile $codexDesktopBinaryPath
+Assert-InstalledPluginState `
+    -ExecutablePath $codexCommandPath `
+    -ExpectedMarketplaceRoot $marketplaceRoot `
+    -ExpectedPluginDirectory $pluginSourceDirectory `
+    -Version $pluginVersion
 $runtimeSizeMiB = [Math]::Round($runtimeBytes / 1MB, 1)
 Write-Output "Token Poker is installed. The official usage runtime copy uses $runtimeSizeMiB MiB. Open it from a new Codex task."
 }
