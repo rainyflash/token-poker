@@ -32,7 +32,7 @@ Download the Windows x64 ZIP from the [latest release](https://github.com/rainyf
 Install Token Poker.cmd
 ```
 
-The entrypoint validates that the extracted package is complete, automatically chooses install, repair, or upgrade, and keeps the result visible. It does not request administrator access. Its log is stored at `%LOCALAPPDATA%\TokenPoker\logs\installer.log`.
+The entrypoint validates that the extracted package is complete, automatically chooses install, repair, or upgrade, and keeps the result visible. It does not request administrator access or require `codex` on `PATH`. Its log is stored at `%LOCALAPPDATA%\TokenPoker\logs\installer.log`.
 
 PowerShell remains available as a diagnostic fallback:
 
@@ -52,7 +52,7 @@ The ZIP is a plugin package, not a standalone game launcher. Token Poker is alwa
 
 The plugin does not bundle Node.js, modify `PATH`, write Node-related registry entries, or replace an existing Node installation. It prefers the runtime managed by Codex and falls back to system Node only for source development.
 
-During installation, the script copies the current Codex desktop App Server binary into the versioned plugin cache. This works around Windows Store execution restrictions and currently consumes roughly 284 MiB of local disk space. The binary is copied from the user's existing Codex installation; it is not included in the release ZIP.
+During installation, the script locates the current Codex desktop App Server even when no Codex CLI command is registered. For Windows Store installations, it creates a verified temporary copy to run the official plugin commands, removes that bootstrap copy afterward, and keeps one copy in the versioned plugin cache for official usage reads. The installed runtime currently consumes roughly 284 MiB of local disk space. The binary comes from the user's existing Codex installation; it is not included in the release ZIP.
 
 ## Architecture
 

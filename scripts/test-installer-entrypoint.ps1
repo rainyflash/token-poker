@@ -53,6 +53,7 @@ try {
     $requiredFiles = @(
         'manifest.json',
         'install-token-poker.ps1',
+        'codex-runtime.ps1',
         '.agents\plugins\marketplace.json',
         'plugins\token-holdem\.mcp.json',
         'plugins\token-holdem\.codex-plugin\plugin.json',

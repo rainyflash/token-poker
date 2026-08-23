@@ -53,6 +53,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/test-installer-entrypoint.ps1
+          ./scripts/test-codex-runtime-resolution.ps1
           python ./scripts/build-plugin.py
 
       - name: Validate update manifest

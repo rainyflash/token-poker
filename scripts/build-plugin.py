@@ -221,6 +221,10 @@ def package(version: str) -> tuple[Path, Path, str]:
         PROJECT_ROOT / "scripts" / "install-plugin.ps1",
         staging_directory / "install-token-poker.ps1",
     )
+    copy_file(
+        PROJECT_ROOT / "scripts" / "codex-runtime.ps1",
+        staging_directory / "codex-runtime.ps1",
+    )
     copy_file(PROJECT_ROOT / "docs" / "PLUGIN-DISTRIBUTION.md", staging_directory / "README.md")
     copy_file(PROJECT_ROOT / "SECURITY.md", staging_directory / "SECURITY.md")
     copy_file(PROJECT_ROOT / "LICENSE-MIT", staging_directory / "LICENSE-MIT")

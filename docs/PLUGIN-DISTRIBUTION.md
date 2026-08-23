@@ -32,7 +32,7 @@ For diagnostics, the installation core can still be started directly:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-token-poker.ps1
 ```
 
-The installer uses official `codex plugin marketplace` and `codex plugin add` commands, synchronizes the versioned plugin payload, and copies the current desktop Codex App Server into the versioned cache. It does not modify `PATH`, write registry settings, install Node.js, start a Windows service, or configure startup tasks.
+The installer uses official `codex plugin marketplace` and `codex plugin add` commands, synchronizes the versioned plugin payload, and copies the current desktop Codex App Server into the versioned cache. It resolves Windows Store and common desktop installations directly, so a separate Codex CLI command on `PATH` is not required. When Windows blocks execution inside the Store package directory, the installer runs a SHA-256-verified temporary copy and removes it afterward. It does not modify `PATH`, write registry settings, install Node.js, start a Windows service, or configure startup tasks.
 
 The shared game runtime starts only when Token Poker is opened. After the last plugin view closes, an idle runtime with no matchmaking or active table exits after 30 minutes.
 

@@ -14,6 +14,8 @@ call :require_file "manifest.json"
 if errorlevel 1 goto :incomplete_package
 call :require_file "install-token-poker.ps1"
 if errorlevel 1 goto :incomplete_package
+call :require_file "codex-runtime.ps1"
+if errorlevel 1 goto :incomplete_package
 call :require_file ".agents\plugins\marketplace.json"
 if errorlevel 1 goto :incomplete_package
 call :require_file "plugins\token-holdem\.mcp.json"

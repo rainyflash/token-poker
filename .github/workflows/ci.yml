@@ -78,6 +78,7 @@ jobs:
         run: |
           ./scripts/check-syntax.ps1
           ./scripts/test-installer-entrypoint.ps1
+          ./scripts/test-codex-runtime-resolution.ps1
           python -m py_compile scripts/build-plugin.py
           python -m py_compile scripts/check-rust-security-baseline.py
           python scripts/check-rust-security-baseline.py

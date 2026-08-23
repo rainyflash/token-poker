@@ -2,6 +2,17 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-08-22
+
+### Fixed
+
+- Fixed Windows desktop installation when Codex is installed but the optional `codex` CLI command is absent from `PATH`.
+- Added direct Windows App package discovery and a verified temporary executable bootstrap for official plugin registration commands.
+
+### Changed
+
+- Moved Codex runtime discovery and bootstrap cleanup into a separately tested installer component.
+
 ## [0.4.1] - 2026-08-22
 
 ### Added
@@ -61,6 +72,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.2]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.2
 [0.4.1]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.1
 [0.4.0]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.0
 [0.3.1]: https://github.com/rainyflash/token-poker/releases/tag/v0.3.1

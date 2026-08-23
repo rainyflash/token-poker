@@ -9,6 +9,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $transcriptStarted = $false
+$bootstrapDirectory = $null
+$bootstrapBaseDirectory = $null
 try {
 if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
     $resolvedLogPath = [System.IO.Path]::GetFullPath($LogPath)
@@ -17,6 +19,12 @@ if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
     Start-Transcript -LiteralPath $resolvedLogPath -Append -Force | Out-Null
     $transcriptStarted = $true
 }
+
+$runtimeResolverPath = Join-Path $PSScriptRoot 'codex-runtime.ps1'
+if (-not (Test-Path -LiteralPath $runtimeResolverPath -PathType Leaf)) {
+    throw "The installer package is missing its Codex runtime resolver: $runtimeResolverPath"
+}
+. $runtimeResolverPath
 
 $marketplaceRoot = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.agents\plugins\marketplace.json')) {
     (Resolve-Path $PSScriptRoot).Path
@@ -32,30 +40,6 @@ $pluginVersion = (
     Get-Content -LiteralPath $pluginManifestPath -Raw -Encoding UTF8 |
         ConvertFrom-Json
 ).version
-$codexCommand = Get-Command codex -ErrorAction SilentlyContinue
-if ($null -eq $codexCommand) {
-    throw 'Codex CLI was not found. Install or update Codex desktop and make sure the codex command is available.'
-}
-
-function Find-CodexDesktopBinary {
-    $appPackages = @(
-        Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue |
-            Sort-Object Version -Descending
-    )
-    foreach ($package in $appPackages) {
-        $candidatePath = Join-Path $package.InstallLocation 'app\resources\codex.exe'
-        if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
-            return (Resolve-Path -LiteralPath $candidatePath).Path
-        }
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_CLI_PATH) -and
-        (Test-Path -LiteralPath $env:CODEX_CLI_PATH -PathType Leaf)) {
-        return (Resolve-Path -LiteralPath $env:CODEX_CLI_PATH).Path
-    }
-
-    throw 'Could not locate the App Server bundled with Codex desktop. Update or reinstall Codex desktop first.'
-}
 
 function Get-CodexHomeRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
@@ -74,14 +58,16 @@ function Get-PluginCacheDirectory {
 }
 
 function Prepare-OfficialUsageRuntime {
-    param([Parameter(Mandatory)][string]$Version)
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string]$SourceFile
+    )
 
     $pluginCacheDirectory = Get-PluginCacheDirectory -Version $Version
     if (-not (Test-Path -LiteralPath $pluginCacheDirectory -PathType Container)) {
         throw "Codex did not create the Token Poker plugin cache: $pluginCacheDirectory"
     }
 
-    $sourceFile = Find-CodexDesktopBinary
     $targetDirectory = Join-Path $pluginCacheDirectory 'bin'
     $targetFile = Join-Path $targetDirectory 'codex-app-server.exe'
     New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
@@ -118,12 +104,15 @@ function Prepare-OfficialUsageRuntime {
 }
 
 function Invoke-CodexCommand {
-    param([Parameter(Mandatory)][string[]]$Arguments)
+    param(
+        [Parameter(Mandatory)][string]$ExecutablePath,
+        [Parameter(Mandatory)][string[]]$Arguments
+    )
 
     $originalErrorPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        & $codexCommand.Source @Arguments *> $null
+        & $ExecutablePath @Arguments *> $null
         return [int]$LASTEXITCODE
     }
     finally {
@@ -132,12 +121,14 @@ function Invoke-CodexCommand {
 }
 
 function Test-MarketplaceRegistered {
+    param([Parameter(Mandatory)][string]$ExecutablePath)
+
     $output = @()
     $exitCode = 1
     $originalErrorPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        $output = @(& $codexCommand.Source plugin marketplace list 2>&1)
+        $output = @(& $ExecutablePath plugin marketplace list 2>&1)
         $exitCode = [int]$LASTEXITCODE
     }
     finally {
@@ -154,6 +145,23 @@ function Test-MarketplaceRegistered {
         }
     }
     return $false
+}
+
+function Test-CodexCommand {
+    param([Parameter(Mandatory)][string]$ExecutablePath)
+
+    $originalErrorPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $ExecutablePath --version *> $null
+        return $LASTEXITCODE -eq 0
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $ErrorActionPreference = $originalErrorPreference
+    }
 }
 
 function Copy-VerifiedFile {
@@ -326,7 +334,32 @@ if ($ValidateOnly) {
     return
 }
 
-$marketplaceRegistered = Test-MarketplaceRegistered
+$codexCommandPath = Resolve-CodexCliCommandPath -ExplicitPath $env:CODEX_CLI_PATH
+$codexDesktopBinaryPath = Resolve-CodexDesktopBinaryPath `
+    -ExplicitPath $env:CODEX_APP_SERVER_PATH `
+    -AdditionalCandidates @($codexCommandPath)
+if ($null -eq $codexDesktopBinaryPath) {
+    throw 'Could not locate the official App Server bundled with Codex desktop. Install or update Codex desktop and retry.'
+}
+
+if ($null -eq $codexCommandPath -or -not (Test-CodexCommand -ExecutablePath $codexCommandPath)) {
+    $bootstrapBaseDirectory = if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        Join-Path $env:LOCALAPPDATA 'TokenPoker\installer-runtime'
+    }
+    else {
+        Join-Path ([System.IO.Path]::GetTempPath()) 'TokenPoker\installer-runtime'
+    }
+    $bootstrap = New-CodexBootstrapCopy `
+        -SourcePath $codexDesktopBinaryPath `
+        -BaseDirectory $bootstrapBaseDirectory
+    $bootstrapDirectory = $bootstrap.DirectoryPath
+    $codexCommandPath = $bootstrap.CommandPath
+}
+if (-not (Test-CodexCommand -ExecutablePath $codexCommandPath)) {
+    throw 'The official Codex desktop executable could not start from the installer workspace.'
+}
+
+$marketplaceRegistered = Test-MarketplaceRegistered -ExecutablePath $codexCommandPath
 $effectiveUpgrade = $Upgrade -or $marketplaceRegistered
 $pluginCacheDirectory = Get-PluginCacheDirectory -Version $pluginVersion
 $repairInPlace = $effectiveUpgrade -and
@@ -340,30 +373,42 @@ if ($effectiveUpgrade) {
 }
 
 if ($marketplaceRegistered -and -not $repairInPlace) {
-    if ((Invoke-CodexCommand -Arguments @('plugin', 'remove', $pluginSelector)) -ne 0) {
+    if ((Invoke-CodexCommand -ExecutablePath $codexCommandPath -Arguments @('plugin', 'remove', $pluginSelector)) -ne 0) {
         Write-Warning 'The current Codex task still locks the old plugin cache. Registration will continue, and Codex will clean the old cache after exit.'
     }
-    if ((Invoke-CodexCommand -Arguments @('plugin', 'marketplace', 'remove', $marketplaceName)) -ne 0) {
+    if ((Invoke-CodexCommand -ExecutablePath $codexCommandPath -Arguments @('plugin', 'marketplace', 'remove', $marketplaceName)) -ne 0) {
         throw 'Could not update the Token Poker marketplace registration. Verify the old version is installed and retry.'
     }
 }
 
 if (-not $repairInPlace) {
-    if ((Invoke-CodexCommand -Arguments @('plugin', 'marketplace', 'add', $marketplaceRoot)) -ne 0) {
+    if ((Invoke-CodexCommand -ExecutablePath $codexCommandPath -Arguments @('plugin', 'marketplace', 'add', $marketplaceRoot)) -ne 0) {
         throw 'Could not register the Token Poker marketplace. Close Codex and retry installation.'
     }
 
-    if ((Invoke-CodexCommand -Arguments @('plugin', 'add', $pluginSelector)) -ne 0) {
+    if ((Invoke-CodexCommand -ExecutablePath $codexCommandPath -Arguments @('plugin', 'add', $pluginSelector)) -ne 0) {
         throw 'Could not install Token Poker. Close Codex and retry installation.'
     }
 }
 
 Sync-PluginCachePayload -Version $pluginVersion -PayloadFiles $payloadFiles
-$runtimeBytes = Prepare-OfficialUsageRuntime -Version $pluginVersion
+$runtimeBytes = Prepare-OfficialUsageRuntime `
+    -Version $pluginVersion `
+    -SourceFile $codexDesktopBinaryPath
 $runtimeSizeMiB = [Math]::Round($runtimeBytes / 1MB, 1)
 Write-Output "Token Poker is installed. The official usage runtime copy uses $runtimeSizeMiB MiB. Open it from a new Codex task."
 }
 finally {
+    if ($null -ne $bootstrapDirectory -and $null -ne $bootstrapBaseDirectory) {
+        try {
+            Remove-CodexBootstrapCopy `
+                -DirectoryPath $bootstrapDirectory `
+                -BaseDirectory $bootstrapBaseDirectory
+        }
+        catch {
+            Write-Warning "Could not remove the temporary Codex installer runtime: $($_.Exception.Message)"
+        }
+    }
     if ($transcriptStarted) {
         Stop-Transcript | Out-Null
     }
