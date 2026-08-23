@@ -51,7 +51,9 @@ jobs:
 
       - name: Build release assets
         shell: pwsh
-        run: python ./scripts/build-plugin.py
+        run: |
+          ./scripts/test-installer-entrypoint.ps1
+          python ./scripts/build-plugin.py
 
       - name: Validate update manifest
         shell: pwsh
@@ -121,4 +123,4 @@ jobs:
             --verify-tag `
             --generate-notes `
             --title "Token Poker $env:GITHUB_REF_NAME" `
-            --notes 'Unsigned Windows x64 Codex plugin. It does not bundle Node.js or inject into Codex. Open it from a new Codex task after installation. SHA-256 verifies byte integrity; it is not publisher authentication.'
+            --notes 'Unsigned Windows x64 Codex plugin. Fully extract the ZIP and double-click Install Token Poker.cmd. It does not bundle Node.js or inject into Codex. Restart Codex and open it from a new task after installation. SHA-256 verifies byte integrity; it is not publisher authentication.'

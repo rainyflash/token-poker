@@ -26,19 +26,21 @@ The project is compilable and covered by automated protocol tests, but its crypt
 
 ## Install
 
-Download the Windows x64 ZIP and matching SHA-256 file from the [latest release](https://github.com/rainyflash/token-poker/releases/latest). Verify the checksum, extract the archive, and run:
+Download the Windows x64 ZIP from the [latest release](https://github.com/rainyflash/token-poker/releases/latest), fully extract it into a normal folder, and double-click:
 
-```powershell
-.\install-token-poker.ps1
+```text
+Install Token Poker.cmd
 ```
 
-For an existing installation:
+The entrypoint validates that the extracted package is complete, automatically chooses install, repair, or upgrade, and keeps the result visible. It does not request administrator access. Its log is stored at `%LOCALAPPDATA%\TokenPoker\logs\installer.log`.
+
+PowerShell remains available as a diagnostic fallback:
 
 ```powershell
-.\install-token-poker.ps1 -Upgrade
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-token-poker.ps1
 ```
 
-Create a new Codex task after installation and ask:
+Fully restart Codex after installation, create a new task, and ask:
 
 ```text
 Open Token Poker and read my official lifetime Token.
@@ -165,7 +167,7 @@ The stable update manifest is available at:
 https://github.com/rainyflash/token-poker/releases/latest/download/latest.json
 ```
 
-Token Poker checks this manifest when its UI opens. A user can download the release into isolated local staging, verify the declared size and SHA-256 digest, and explicitly confirm installation. A detached PowerShell helper validates every archive path and package-manifest file before the existing Codex CLI installer replaces the plugin. Token Poker never overwrites its own running binaries.
+Token Poker checks this manifest when its UI opens. A user can download the release into isolated local staging, verify the declared size and SHA-256 digest, and explicitly confirm installation. A detached PowerShell helper validates every archive path and package-manifest file before the existing Codex CLI installer replaces the plugin. Token Poker never overwrites its own running binaries. Manual bootstrap installations use the double-click CMD entrypoint; later updates continue through the in-app flow.
 
 Version 0.4.0 is the updater bootstrap release. Older versions cannot add updater code to themselves, so users on 0.3.x must install 0.4.0 manually once. Later stable releases can use the in-app flow.
 

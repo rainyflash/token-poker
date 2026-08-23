@@ -2,6 +2,27 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-08-22
+
+### Added
+
+- Added a double-click Windows installer entrypoint with package-completeness checks, persistent logs, visible success and failure states, and automated regression tests.
+
+### Changed
+
+- Made the PowerShell installation core automatically choose first installation, same-version repair, or cross-version upgrade.
+
+## [0.4.0] - 2026-08-22
+
+### Added
+
+- Added an in-app, user-confirmed updater with isolated download staging, package-manifest validation, and SHA-256 verification.
+- Added a copied Codex App Server runtime for reliable access to official lifetime Token usage on Windows Store installations.
+
+### Changed
+
+- Moved release packaging to the `token-poker-plugin-v<version>-windows-x64.zip` naming contract.
+
 ## [0.3.1] - 2026-08-22
 
 ### Changed
@@ -40,5 +61,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.1]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.1
+[0.4.0]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.0
 [0.3.1]: https://github.com/rainyflash/token-poker/releases/tag/v0.3.1
 [0.3.0]: https://github.com/rainyflash/token-poker/releases/tag/v0.3.0

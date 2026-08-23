@@ -6,22 +6,30 @@ The release is an unsigned Windows x64 Codex plugin, not a standalone desktop ap
 
 1. Download the same-version ZIP, `.zip.sha256`, and `latest.json` from the official GitHub Release.
 2. Verify SHA-256 and completely extract the ZIP.
-3. Open PowerShell in the extracted directory and run:
+3. Double-click this file in the extracted directory:
 
-```powershell
-.\install-token-poker.ps1
+```text
+Install Token Poker.cmd
 ```
 
-4. Create a new Codex task and ask:
+4. Fully restart Codex, create a new task, and ask:
 
 ```text
 Open Token Poker and read my official lifetime Token.
 ```
 
-Upgrade an existing installation with:
+The same double-click entrypoint handles first installation, same-version repair, and cross-version upgrade automatically. It checks that the package was completely extracted, runs PowerShell with a process-scoped execution-policy bypass, preserves the installer exit code, and leaves the result visible. It does not request administrator access.
+
+The installer log is stored at:
+
+```text
+%LOCALAPPDATA%\TokenPoker\logs\installer.log
+```
+
+For diagnostics, the installation core can still be started directly:
 
 ```powershell
-.\install-token-poker.ps1 -Upgrade
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-token-poker.ps1
 ```
 
 The installer uses official `codex plugin marketplace` and `codex plugin add` commands, synchronizes the versioned plugin payload, and copies the current desktop Codex App Server into the versioned cache. It does not modify `PATH`, write registry settings, install Node.js, start a Windows service, or configure startup tasks.
@@ -64,13 +72,13 @@ Each release includes `latest.json`:
 {
   "schema_version": 1,
   "channel": "stable",
-  "version": "0.4.0",
-  "tag": "v0.4.0",
+  "version": "<version>",
+  "tag": "v<version>",
   "repository": "rainyflash/token-poker",
   "artifacts": [
     {
       "target": "windows-x64",
-      "name": "token-poker-plugin-v0.4.0-windows-x64.zip",
+      "name": "token-poker-plugin-v<version>-windows-x64.zip",
       "bytes": 123,
       "sha256": "..."
     }
@@ -86,13 +94,13 @@ https://github.com/rainyflash/token-poker/releases/latest/download/latest.json
 
 The in-app updater rejects unknown schemas, malformed semantic versions, unexpected repositories, unsupported targets, invalid sizes, untrusted redirects, archive traversal, undeclared package files, and SHA-256 mismatches. It stages files outside the plugin cache and uses a detached process so active MCP and sidecar binaries are never overwritten in place.
 
-Version 0.4.0 is the updater bootstrap release. Install it manually when upgrading from 0.3.x; subsequent stable releases can be checked, downloaded, verified, and confirmed inside Token Poker.
+Version 0.4.0 is the updater bootstrap release. Install it manually when upgrading from 0.3.x; subsequent stable releases can be checked, downloaded, verified, and confirmed inside Token Poker. Current manual packages expose `Install Token Poker.cmd` as their only user-facing installation entrypoint.
 
 ## Integrity and risk
 
 ```powershell
-(Get-FileHash .\token-poker-plugin-v0.4.0-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-Get-Content .\token-poker-plugin-v0.4.0-windows-x64.zip.sha256
+(Get-FileHash .\token-poker-plugin-v<version>-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+Get-Content .\token-poker-plugin-v<version>-windows-x64.zip.sha256
 ```
 
 The digests must match. SHA-256 verifies bytes, not publisher identity. The ZIP, Rust binaries, and PowerShell installer are not Authenticode-signed, so Windows may display an unknown-publisher warning.
