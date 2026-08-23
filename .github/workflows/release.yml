@@ -54,6 +54,7 @@ jobs:
         run: |
           ./scripts/test-installer-entrypoint.ps1
           ./scripts/test-codex-runtime-resolution.ps1
+          ./scripts/test-forward-update-contract.ps1
           python ./scripts/build-plugin.py
           ./scripts/install-plugin.ps1 -ValidateOnly
 
