@@ -73,6 +73,7 @@ function isHandSeatArray(value: unknown): value is {
   stack: number;
   committed: number;
   status: "active" | "folded" | "all_in";
+  last_action: "fold" | "check" | "call" | "raise" | null;
 }[] {
   return (
     Array.isArray(value) &&
@@ -83,7 +84,9 @@ function isHandSeatArray(value: unknown): value is {
         isString(seat.player_id) &&
         isNonNegativeSafeInteger(seat.stack) &&
         isNonNegativeSafeInteger(seat.committed) &&
-        (seat.status === "active" || seat.status === "folded" || seat.status === "all_in"),
+        (seat.status === "active" || seat.status === "folded" || seat.status === "all_in") &&
+        (seat.last_action === null ||
+          isStringMember(seat.last_action, ["fold", "check", "call", "raise"] as const)),
     )
   );
 }
@@ -625,6 +628,8 @@ export function parseSidecarEvent(value: unknown): SidecarEvent | null {
         isNonNegativeSafeInteger(value.maximum_raise_to) &&
         typeof value.can_act === "boolean" &&
         typeof value.awaiting_reveal === "boolean" &&
+        isPositiveSafeInteger(value.action_timeout_ms) &&
+        isNullableNonNegativeSafeInteger(value.turn_deadline_unix_ms) &&
         isHandCardArray(value.board) &&
         isHandSeatArray(value.seats) &&
         isString(value.transcript_hash)
@@ -643,6 +648,8 @@ export function parseSidecarEvent(value: unknown): SidecarEvent | null {
             maximum_raise_to: value.maximum_raise_to,
             can_act: value.can_act,
             awaiting_reveal: value.awaiting_reveal,
+            action_timeout_ms: value.action_timeout_ms,
+            turn_deadline_unix_ms: value.turn_deadline_unix_ms,
             board: value.board,
             seats: value.seats,
             transcript_hash: value.transcript_hash,

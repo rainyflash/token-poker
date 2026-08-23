@@ -208,7 +208,9 @@ export function MatchmakingView({ bridge, sendCommand }: MatchmakingViewProps) {
   const { t } = useI18n();
   const hasRoom = bridge.room.tableId !== null;
   const isFriendRoom = bridge.friendRoomStatus !== "idle";
+  const isLeaving = bridge.room.localRole === "leaving";
   const leave = (): void => {
+    if (isLeaving) return;
     sendCommand({ type: hasRoom || isFriendRoom ? "leave_table" : "cancel_public_pool" });
   };
 
@@ -224,9 +226,9 @@ export function MatchmakingView({ bridge, sendCommand }: MatchmakingViewProps) {
               dot
             />
           </div>
-          <Button variant="secondary" size="sm" onClick={leave}>
+          <Button variant="secondary" size="sm" disabled={isLeaving} onClick={leave}>
             {hasRoom ? <LogOut className="size-3.5" /> : <X className="size-3.5" />}
-            {t(hasRoom ? "match.safeLeave" : "match.stopSearch")}
+            {t(isLeaving ? "table.leavingShort" : hasRoom ? "match.safeLeave" : "match.stopSearch")}
           </Button>
         </div>
 

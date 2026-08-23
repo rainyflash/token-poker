@@ -171,11 +171,24 @@ async function main() {
     );
     const hostReady = host.latest("hand_ready");
     const guestReady = guest.latest("hand_ready");
+    const initialHostState = host.latest("hand_state");
+    const initialGuestState = guest.latest("hand_state");
     assert(hostReady.table_id === guestReady.table_id, "双端私牌属于不同牌桌");
     assert(hostReady.hand_number === guestReady.hand_number, "双端手牌编号不同");
     assert(hostReady.hole_cards.length === 2, "主端没有收到两张私牌");
     assert(guestReady.hole_cards.length === 2, "访客端没有收到两张私牌");
     assert(hostReady.transcript_hash === guestReady.transcript_hash, "双端初始协议摘要不一致");
+    assert(initialHostState.action_timeout_ms === 30_000, "主端没有公布 30 秒行动时限");
+    assert(initialGuestState.action_timeout_ms === 30_000, "访客端没有公布 30 秒行动时限");
+    assert(
+      Number.isSafeInteger(initialHostState.turn_deadline_unix_ms) &&
+        initialHostState.turn_deadline_unix_ms > Date.now(),
+      "主端没有公布当前行动截止时间",
+    );
+    assert(
+      initialHostState.seats.filter((seat) => seat.committed > 0).length === 2,
+      "主端初始状态没有同时包含大小盲下注",
+    );
 
     let actionCount = 0;
     while (host.latest("hand_settled") === null || guest.latest("hand_settled") === null) {
@@ -218,6 +231,16 @@ async function main() {
         30_000,
         `双端没有确认动作 #${String(expectedSequence)}`,
       );
+      if (expectedSequence === 1) {
+        assert(
+          host.latest("hand_state").seats.some((seat) => seat.last_action !== null),
+          "主端没有投影首个玩家动作",
+        );
+        assert(
+          guest.latest("hand_state").seats.some((seat) => seat.last_action !== null),
+          "访客端没有投影首个玩家动作",
+        );
+      }
     }
 
     const hostSettlement = host.latest("hand_settled");

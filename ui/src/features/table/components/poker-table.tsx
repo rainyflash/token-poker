@@ -6,7 +6,11 @@ import { AccountAvatar } from "../../../shared/ui/account-avatar";
 import { StatusPill } from "../../../shared/ui/status-pill";
 import { PlayerSeat } from "./player-seat";
 import { PlayingCard } from "./playing-card";
+import { SeatBadges } from "./seat-badges";
+import { SeatStatus } from "./seat-status";
+import { TurnTimer } from "./turn-timer";
 import {
+  type BlindRole,
   type CardValue,
   type SeatPosition,
   type TablePlayer,
@@ -49,6 +53,19 @@ function cardValue(card: HandSnapshot["board"][number]): CardValue {
   return { rank: rankLabel(card.rank), suit: card.suit };
 }
 
+function blindForSeat(
+  seat: number,
+  dealerSeat: number | null,
+  playerCount: number,
+): BlindRole | undefined {
+  if (dealerSeat === null || playerCount < 2) return undefined;
+  const smallBlindSeat = playerCount === 2 ? dealerSeat : (dealerSeat % playerCount) + 1;
+  const bigBlindSeat = (smallBlindSeat % playerCount) + 1;
+  if (seat === smallBlindSeat) return "small";
+  if (seat === bigBlindSeat) return "big";
+  return undefined;
+}
+
 function livePlayers(
   hand: HandSnapshot,
   playerName: (seat: number, id: string) => string,
@@ -64,6 +81,7 @@ function livePlayers(
           stack: hand.buyIns[index] ?? 0,
           committed: 0,
           status: "active" as const,
+          lastAction: null,
         }));
   const opponents = seats
     .filter((seat) => seat.seat !== localSeat)
@@ -89,6 +107,11 @@ function livePlayers(
             : "waiting",
     committed: seat.committed,
     dealer: hand.dealerSeat === seat.seat,
+    blind: blindForSeat(seat.seat, hand.dealerSeat, seats.length),
+    lastAction: seat.lastAction,
+    turnDeadlineUnixMs:
+      hand.nextSeat === seat.seat ? hand.turnDeadlineUnixMs : null,
+    actionTimeoutMs: hand.actionTimeoutMs,
   }));
 }
 
@@ -112,6 +135,23 @@ export function PokerTable({
     hand.localSeat === null
       ? heroStack
       : (hand.seats.find((seat) => seat.seat === hand.localSeat)?.stack ?? heroStack);
+  const heroSeat =
+    hand.localSeat === null
+      ? undefined
+      : hand.seats.find((seat) => seat.seat === hand.localSeat);
+  const heroStatus: TablePlayer["status"] =
+    heroSeat?.status === "folded"
+      ? "folded"
+      : heroSeat?.status === "all_in"
+        ? "all-in"
+        : hand.localSeat !== null && hand.nextSeat === hand.localSeat
+          ? "thinking"
+          : "waiting";
+  const heroCommitted = heroSeat?.committed ?? 0;
+  const heroBlind =
+    hand.localSeat === null
+      ? undefined
+      : blindForSeat(hand.localSeat, hand.dealerSeat, hand.seats.length);
   const proofLabel =
     hand.phase === "revealing"
       ? t("table.proofReveal")
@@ -186,14 +226,31 @@ export function PokerTable({
                   {formatTokens(liveHeroStack)} Token
                 </p>
               </div>
-              {hand.localSeat !== null && hand.dealerSeat === hand.localSeat ? (
-                <span className="ml-auto grid size-5 shrink-0 place-items-center rounded-full bg-[#202623] text-[8px] font-semibold text-white">
-                  D
-                </span>
-              ) : null}
+              <span className="ml-auto">
+                <SeatBadges
+                  dealer={hand.localSeat !== null && hand.dealerSeat === hand.localSeat}
+                  blind={heroBlind}
+                />
+              </span>
             </div>
-            <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-full border border-black/[.075] bg-white/90 px-3 py-1 text-[10px] text-[var(--muted)] shadow-sm">
-              {actionMessage ?? t(hand.canAct ? "table.yourTurn" : "table.waitingPlayers")}
+            <div className="absolute right-full top-1/2 mr-2 -translate-y-1/2">
+              <SeatStatus
+                status={heroStatus}
+                lastAction={heroSeat?.lastAction}
+                committed={heroCommitted}
+              />
+            </div>
+            {heroStatus === "thinking" ? (
+              <TurnTimer
+                className="absolute left-full top-1/2 ml-2 -translate-y-1/2"
+                deadlineUnixMs={hand.turnDeadlineUnixMs}
+                durationMs={hand.actionTimeoutMs}
+              />
+            ) : null}
+            <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2">
+              <div className="whitespace-nowrap rounded-full border border-black/[.075] bg-white/90 px-3 py-1 text-[10px] text-[var(--muted)] shadow-sm">
+                {actionMessage ?? t(hand.canAct ? "table.yourTurn" : "table.waitingPlayers")}
+              </div>
             </div>
           </motion.div>
         </div>

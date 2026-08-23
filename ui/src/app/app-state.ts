@@ -4,6 +4,9 @@ export type PrimarySurface = "lobby" | "matching" | "table";
 export type AppSubview = "statistics" | "identity";
 
 export function projectPrimarySurface(bridge: BridgeSnapshot): PrimarySurface {
+  if (bridge.room.localRole === "leaving") {
+    return "matching";
+  }
   if (bridge.hand.tableId !== null && bridge.hand.phase !== "idle") {
     return "table";
   }

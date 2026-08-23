@@ -6,6 +6,8 @@ export interface CardValue {
 }
 
 export type SeatPosition = "top" | "upper-left" | "lower-left" | "upper-right" | "lower-right";
+export type BlindRole = "small" | "big";
+export type TableAction = "fold" | "check" | "call" | "raise";
 
 export interface TablePlayer {
   readonly id: string;
@@ -16,4 +18,8 @@ export interface TablePlayer {
   readonly status?: "thinking" | "acted" | "waiting" | "folded" | "all-in";
   readonly committed?: number;
   readonly dealer?: boolean;
+  readonly blind?: BlindRole;
+  readonly lastAction?: TableAction | null;
+  readonly turnDeadlineUnixMs?: number | null;
+  readonly actionTimeoutMs?: number;
 }

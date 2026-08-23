@@ -24,7 +24,11 @@ interface TableViewProps {
 export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewProps) {
   const { t, formatTokens } = useI18n();
   const [requestedBetAmount, setRequestedBetAmount] = useState(0);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{
+    readonly sequence: number;
+    readonly message: string;
+  } | null>(null);
+  const [leaveRequested, setLeaveRequested] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const hand = bridge.hand;
   const profile = projectPlayerProfile(
@@ -39,7 +43,9 @@ export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewPr
   const minimumRaise = hand.minimumRaiseTo;
   const maximumRaise = hand.maximumRaiseTo;
   const betAmount = Math.min(maximumRaise, Math.max(minimumRaise, requestedBetAmount));
-  const canAct = hand.canAct && hand.pendingSequence === null && !hand.sessionInterrupted;
+  const leaving = leaveRequested || bridge.room.localRole === "leaving";
+  const canAct =
+    hand.canAct && hand.pendingSequence === null && !hand.sessionInterrupted && !leaving;
   const awaitingReveal = hand.awaitingReveal;
   const localOutcome = hand.outcomes.find((outcome) => outcome.seat === hand.localSeat);
   const settledMessage =
@@ -77,6 +83,13 @@ export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewPr
           ? t("table.protocolPaused")
         : t("table.proofVerified");
 
+  const actionMessage =
+    leaving
+      ? t("table.leaving")
+      : actionFeedback?.sequence === hand.sequence
+        ? actionFeedback.message
+        : null;
+
   const submitAction = (action: "fold" | "check" | "call" | "raise"): void => {
     const command: HostCommand =
       action === "raise"
@@ -89,18 +102,22 @@ export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewPr
       call: "table.actionCalled",
       raise: "table.actionRaised",
     };
-    setActionMessage(
-      result.ok
+    setActionFeedback({
+      sequence: hand.sequence,
+      message: result.ok
         ? t(actionKeys[action], { amount: formatTokens(betAmount) })
         : result.error,
-    );
+    });
   };
 
   const leaveTable = (): void => {
+    if (leaving) return;
     const result = sendCommand({ type: "leave_table" });
     if (!result.ok) {
-      setActionMessage(result.error);
+      setActionFeedback({ sequence: hand.sequence, message: result.error });
+      return;
     }
+    setLeaveRequested(true);
   };
 
   return (
@@ -130,9 +147,11 @@ export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewPr
           <Button variant="ghost" size="icon" onClick={() => setShowInfo((value) => !value)} aria-label={t("table.info")}>
             <PanelRight className="size-4" strokeWidth={1.7} />
           </Button>
-          <Button className="ml-1 min-[520px]:ml-2" size="sm" onClick={leaveTable} aria-label={t("table.leave")}>
+          <Button className="ml-1 min-[520px]:ml-2" size="sm" disabled={leaving} onClick={leaveTable} aria-label={t("table.leave")}>
             <LogOut className="size-3.5" />
-            <span className="hidden min-[520px]:inline">{t("table.leave")}</span>
+            <span className="hidden min-[520px]:inline">
+              {t(leaving ? "table.leavingShort" : "table.leave")}
+            </span>
           </Button>
         </div>
       </header>

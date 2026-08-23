@@ -4,15 +4,19 @@ import { cn } from "../../../shared/lib/cn";
 import type { TablePlayer } from "../model/table-state";
 import { AvatarGlyph } from "./avatar-glyph";
 import { PlayingCard } from "./playing-card";
+import { SeatBadges } from "./seat-badges";
+import { SeatStatus } from "./seat-status";
+import { TurnTimer } from "./turn-timer";
 
 export function PlayerSeat({ player }: { readonly player: TablePlayer }) {
-  const { t, formatTokens } = useI18n();
+  const { formatTokens } = useI18n();
+  const committed = player.committed ?? 0;
   return (
     <div
       className={cn(
         "player-seat-anchor absolute z-20",
         `seat-${player.seat}`,
-        player.status === "folded" && "opacity-45 grayscale",
+        player.status === "folded" && "opacity-65 grayscale",
       )}
     >
       <motion.div
@@ -36,20 +40,19 @@ export function PlayerSeat({ player }: { readonly player: TablePlayer }) {
           {player.status === "thinking" ? (
             <span className="absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-white bg-[#2d96e9]" />
           ) : null}
-          {player.dealer === true ? (
-            <span className="absolute -bottom-1 -right-1 grid size-5 place-items-center rounded-full border border-black/10 bg-[#202623] text-[8px] font-semibold text-white shadow-sm">
-              D
-            </span>
+          <span className="ml-auto">
+            <SeatBadges dealer={player.dealer === true} blind={player.blind} />
+          </span>
+        </div>
+        <div className="absolute left-1/2 top-full mt-2 flex -translate-x-1/2 flex-col items-center gap-1">
+          <SeatStatus status={player.status} lastAction={player.lastAction} committed={committed} />
+          {player.status === "thinking" ? (
+            <TurnTimer
+              deadlineUnixMs={player.turnDeadlineUnixMs}
+              durationMs={player.actionTimeoutMs}
+            />
           ) : null}
         </div>
-        {(player.committed ?? 0) > 0 ? (
-          <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-full border border-black/[.075] bg-white/92 px-3 py-1 text-[10px] text-[var(--muted)] shadow-sm">
-            {t(player.status === "all-in" ? "player.allIn" : "player.bet")}{" "}
-            <strong className="font-semibold text-[var(--ink)]">
-              {formatTokens(player.committed ?? 0)}
-            </strong>
-          </div>
-        ) : null}
       </motion.div>
     </div>
   );

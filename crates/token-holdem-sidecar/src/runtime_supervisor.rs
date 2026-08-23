@@ -108,7 +108,7 @@ fn parse_supervisor_args(
 }
 
 fn validate_pipe_name(pipe_name: &str) -> Result<()> {
-    const PREFIX: &str = r"\\.\pipe\token-holdem-runtime-v2-";
+    const PREFIX: &str = r"\\.\pipe\token-holdem-runtime-v3-";
     let Some(suffix) = pipe_name.strip_prefix(PREFIX) else {
         anyhow::bail!("运行时命名管道前缀无效")
     };
@@ -927,7 +927,7 @@ mod tests {
     fn 监督器参数要求受限命名管道并保留牌局参数() {
         let config = parse_supervisor_args(
             [
-                OsString::from(r"--pipe-name=\\.\pipe\token-holdem-runtime-v2-aabbccddeeff"),
+                OsString::from(r"--pipe-name=\\.\pipe\token-holdem-runtime-v3-aabbccddeeff"),
                 OsString::from("--idle-timeout-seconds=30"),
                 OsString::from("--"),
                 OsString::from("--volunteer-consent=granted"),
@@ -951,7 +951,7 @@ mod tests {
         .is_err());
         assert!(parse_supervisor_args(
             [
-                OsString::from(r"--pipe-name=\\.\pipe\token-holdem-runtime-v2-aabbccddeeff"),
+                OsString::from(r"--pipe-name=\\.\pipe\token-holdem-runtime-v3-aabbccddeeff"),
                 OsString::from("--"),
                 OsString::from("--daemon"),
             ]

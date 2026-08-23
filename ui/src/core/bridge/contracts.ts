@@ -120,12 +120,15 @@ export interface HandCardSnapshot {
   readonly suit: "club" | "diamond" | "heart" | "spade";
 }
 
+export type HandActionKind = "fold" | "check" | "call" | "raise";
+
 export interface HandSeatSnapshot {
   readonly seat: number;
   readonly playerId: string;
   readonly stack: number;
   readonly committed: number;
   readonly status: "active" | "folded" | "all_in";
+  readonly lastAction: HandActionKind | null;
 }
 
 export interface HandOutcomeSnapshot {
@@ -161,6 +164,8 @@ export interface HandSnapshot {
   readonly maximumRaiseTo: number;
   readonly canAct: boolean;
   readonly awaitingReveal: boolean;
+  readonly actionTimeoutMs: number;
+  readonly turnDeadlineUnixMs: number | null;
   readonly seats: readonly HandSeatSnapshot[];
   readonly pendingSequence: number | null;
   readonly transcriptHash: string | null;
@@ -451,6 +456,8 @@ export type SidecarEvent =
       readonly maximum_raise_to: number;
       readonly can_act: boolean;
       readonly awaiting_reveal: boolean;
+      readonly action_timeout_ms: number;
+      readonly turn_deadline_unix_ms: number | null;
       readonly board: readonly HandCardSnapshot[];
       readonly seats: readonly {
         readonly seat: number;
@@ -458,6 +465,7 @@ export type SidecarEvent =
         readonly stack: number;
         readonly committed: number;
         readonly status: "active" | "folded" | "all_in";
+        readonly last_action: HandActionKind | null;
       }[];
       readonly transcript_hash: string;
     }

@@ -10,7 +10,7 @@ use rand_core::OsRng;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use token_holdem_domain::{
-    ActionOutcome, Card, HandOutcome, HandReceipt, HoldemHand, HoldemSettlement, MatchId,
+    ActionOutcome, Card, Chips, HandOutcome, HandReceipt, HoldemHand, HoldemSettlement, MatchId,
     PhysicalSeat, PlayerAction, PlayerId, SeatStatus, Street, Suit, TranscriptHash,
 };
 use token_holdem_identity::{
@@ -36,6 +36,7 @@ const DIRECT_RETRY_INTERVAL_TICKS: u32 = 4;
 const MAX_DIRECT_MESSAGE_ATTEMPTS: u8 = 24;
 const NON_OWNER_DIAL_FALLBACK_TICKS: u32 = 4;
 const MAX_EARLY_HAND_MESSAGES: usize = 128;
+const TURN_ACTION_TIMEOUT_MS: u64 = 30_000;
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum HandEvent {
@@ -78,6 +79,8 @@ pub(crate) enum HandEvent {
         maximum_raise_to: u64,
         can_act: bool,
         awaiting_reveal: bool,
+        action_timeout_ms: u64,
+        turn_deadline_unix_ms: Option<u64>,
         board: Vec<VisibleCard>,
         seats: Vec<VisibleSeat>,
         transcript_hash: String,
@@ -155,6 +158,7 @@ pub(crate) struct VisibleSeat {
     stack: u64,
     committed: u64,
     status: &'static str,
+    last_action: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -262,6 +266,8 @@ struct ActiveHand {
     mental_transcript: ProtocolTranscript,
     action_transcript: blake3::Hasher,
     last_action_at_unix_ms: Option<u64>,
+    turn_started_at_unix_ms: Option<u64>,
+    last_actions: BTreeMap<u8, PlayerAction>,
     receipt_consensus: Option<ReceiptConsensus>,
     pending_receipt_signatures: BTreeMap<PlayerId, (HandReceipt, ParticipantSignature)>,
     finalized_receipt: Option<CoSignedReceipt>,
@@ -387,10 +393,10 @@ impl HandRuntime {
         active.retry_public_messages(swarm)?;
         active.retry_direct_messages(swarm);
         let mut events = active.drive(swarm, device, certificate, now_unix_ms)?;
-        if active.should_auto_fold() {
+        if let Some(action) = active.automatic_local_action(now_unix_ms)? {
             events.extend(active.commit_local_action(
                 swarm,
-                PlayerAction::Fold,
+                action,
                 now_unix_ms,
                 device,
                 certificate,
@@ -636,6 +642,7 @@ impl HandRuntime {
         {
             return Ok(Vec::new());
         }
+        active.turn_started_at_unix_ms = None;
         let mut events = vec![HandEvent::HandSessionInterrupted {
             table_id: active.table_id_string(),
             hand_number: active.hand_number,
@@ -809,6 +816,8 @@ fn initialize_hand(
         mental_transcript: ProtocolTranscript::default(),
         action_transcript: blake3::Hasher::new(),
         last_action_at_unix_ms: None,
+        turn_started_at_unix_ms: None,
+        last_actions: BTreeMap::new(),
         receipt_consensus: None,
         pending_receipt_signatures: BTreeMap::new(),
         finalized_receipt: None,
@@ -1150,19 +1159,50 @@ impl ActiveHand {
         Ok(events)
     }
 
-    fn should_auto_fold(&self) -> bool {
-        if !self.safe_leave_requested
-            || !self.disconnected_peers.is_empty()
+    fn automatic_local_action(&self, now_unix_ms: u64) -> Result<Option<PlayerAction>> {
+        if !self.disconnected_peers.is_empty()
             || self.action_conflict.is_some()
             || self.pending_reveal.is_some()
             || self.settled
             || !self.all_players_ready()
         {
+            return Ok(None);
+        }
+        let hand = self.hand.as_ref().context("下注状态缺失")?;
+        if hand.next_player() != Some(self.local_player()) {
+            return Ok(None);
+        }
+        if self.safe_leave_requested {
+            return Ok(Some(PlayerAction::Fold));
+        }
+        let Some(started_at) = self.turn_started_at_unix_ms else {
+            return Ok(None);
+        };
+        if now_unix_ms < started_at.saturating_add(TURN_ACTION_TIMEOUT_MS) {
+            return Ok(None);
+        }
+        let to_call = hand
+            .amount_to_call(self.local_player())
+            .context("无法计算超时自动动作的跟注额")?;
+        Ok(Some(timeout_action(to_call)))
+    }
+
+    fn ensure_turn_started(&mut self, now_unix_ms: u64) -> bool {
+        if self.turn_started_at_unix_ms.is_some()
+            || !self.disconnected_peers.is_empty()
+            || self.action_conflict.is_some()
+            || self.pending_reveal.is_some()
+            || self.settled
+            || !self.all_players_ready()
+            || self
+                .hand
+                .as_ref()
+                .is_none_or(|hand| hand.next_player().is_none())
+        {
             return false;
         }
-        self.hand
-            .as_ref()
-            .is_some_and(|hand| hand.next_player() == Some(self.local_player()))
+        self.turn_started_at_unix_ms = Some(now_unix_ms);
+        true
     }
 
     fn commit_local_action(
@@ -1312,6 +1352,9 @@ impl ActiveHand {
             }
         }
         events.extend(self.try_complete_public_reveal(swarm, device, certificate, now_unix_ms)?);
+        if self.ensure_turn_started(now_unix_ms) && self.hand.is_some() {
+            events.push(self.state_event()?);
+        }
         Ok(events)
     }
 
@@ -1490,14 +1533,17 @@ impl ActiveHand {
         if self.pending_reveal.is_some() || self.settled {
             anyhow::bail!("当前不能提交新动作")
         }
+        let player_action = action.action();
         let outcome = self
             .hand
             .as_mut()
             .context("当前手牌尚未完成私密发牌")?
-            .act(player_id, action.action())
+            .act(player_id, player_action)
             .context("桌内动作不合法")?;
         self.sequence = sequence;
         self.last_action_at_unix_ms = Some(action.issued_at_unix_ms());
+        self.turn_started_at_unix_ms = Some(execution.now_unix_ms);
+        self.last_actions.insert(seat, player_action);
         self.append_action(&action)?;
         self.committed_actions.insert(sequence, action.clone());
         if origin == ActionOrigin::Local {
@@ -1582,6 +1628,8 @@ impl ActiveHand {
         match outcome {
             ActionOutcome::WaitingFor(_) => Ok(vec![self.state_event()?]),
             ActionOutcome::StreetAdvanced(street, _) => {
+                self.last_actions.clear();
+                self.turn_started_at_unix_ms = None;
                 let indices = match street {
                     Street::Flop => flop_indices(self.player_count()).to_vec(),
                     Street::Turn => vec![turn_index(self.player_count())],
@@ -1592,6 +1640,7 @@ impl ActiveHand {
                 Ok(vec![self.state_event()?])
             }
             ActionOutcome::ShowdownReady => {
+                self.turn_started_at_unix_ms = None;
                 let mut indices = board_indices(self.player_count()).to_vec();
                 let hand = self.hand.as_ref().context("下注状态缺失")?;
                 for (index, seat) in hand.seats().iter().enumerate() {
@@ -1709,6 +1758,7 @@ impl ActiveHand {
         }
         self.pending_reveal = None;
         if reason == RevealReason::Street {
+            self.turn_started_at_unix_ms = Some(now_unix_ms);
             return Ok(vec![self.state_event()?]);
         }
         let board = board_indices(self.player_count()).map(|index| {
@@ -1752,6 +1802,7 @@ impl ActiveHand {
         now_unix_ms: u64,
     ) -> Result<Vec<HandEvent>> {
         self.settled = true;
+        self.turn_started_at_unix_ms = None;
         let receipt = self.build_receipt(&settlement)?;
         let outcomes = settlement
             .players
@@ -1981,18 +2032,34 @@ impl ActiveHand {
             .seats()
             .iter()
             .enumerate()
-            .map(|(index, seat)| VisibleSeat {
-                seat: u8::try_from(index + 1).unwrap_or(0),
-                player_id: seat.player_id().to_string(),
-                stack: seat.stack().value(),
-                committed: seat.total_committed().value(),
-                status: match seat.status() {
-                    SeatStatus::Active => "active",
-                    SeatStatus::Folded => "folded",
-                    SeatStatus::AllIn => "all_in",
-                },
+            .map(|(index, seat)| {
+                let seat_number = u8::try_from(index + 1).unwrap_or(0);
+                VisibleSeat {
+                    seat: seat_number,
+                    player_id: seat.player_id().to_string(),
+                    stack: seat.stack().value(),
+                    committed: seat.total_committed().value(),
+                    status: match seat.status() {
+                        SeatStatus::Active => "active",
+                        SeatStatus::Folded => "folded",
+                        SeatStatus::AllIn => "all_in",
+                    },
+                    last_action: self.last_actions.get(&seat_number).map(action_name),
+                }
             })
             .collect();
+        let turn_deadline_unix_ms = if next_seat.is_some()
+            && self.all_players_ready()
+            && self.pending_reveal.is_none()
+            && self.action_conflict.is_none()
+            && self.disconnected_peers.is_empty()
+            && !self.settled
+        {
+            self.turn_started_at_unix_ms
+                .map(|started_at| started_at.saturating_add(TURN_ACTION_TIMEOUT_MS))
+        } else {
+            None
+        };
         Ok(HandEvent::HandState {
             table_id: self.table_id_string(),
             hand_number: self.hand_number,
@@ -2018,6 +2085,8 @@ impl ActiveHand {
                 && self.disconnected_peers.is_empty()
                 && !self.settled,
             awaiting_reveal: self.pending_reveal.is_some(),
+            action_timeout_ms: TURN_ACTION_TIMEOUT_MS,
+            turn_deadline_unix_ms,
             board,
             seats,
             transcript_hash: self.transcript_hash(),
@@ -2255,6 +2324,23 @@ fn street_name(street: Street) -> &'static str {
     }
 }
 
+fn action_name(action: &PlayerAction) -> &'static str {
+    match action {
+        PlayerAction::Fold => "fold",
+        PlayerAction::Check => "check",
+        PlayerAction::Call => "call",
+        PlayerAction::RaiseTo(_) => "raise",
+    }
+}
+
+fn timeout_action(to_call: Chips) -> PlayerAction {
+    if to_call == Chips::ZERO {
+        PlayerAction::Check
+    } else {
+        PlayerAction::Fold
+    }
+}
+
 const fn suit_tag(suit: Suit) -> u8 {
     match suit {
         Suit::Clubs => 0,
@@ -2277,5 +2363,11 @@ mod tests {
         assert_eq!(board.len(), 5);
         assert!(holes.is_disjoint(&board));
         assert_eq!(board_indices(6), [13, 14, 15, 17, 19]);
+    }
+
+    #[test]
+    fn 操作超时在无需跟注时过牌否则弃牌() {
+        assert!(matches!(timeout_action(Chips::ZERO), PlayerAction::Check));
+        assert!(matches!(timeout_action(Chips::new(1)), PlayerAction::Fold));
     }
 }

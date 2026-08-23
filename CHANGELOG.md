@@ -2,6 +2,19 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.3] - 2026-08-23
+
+### Added
+
+- Added a 30-second action clock for every seat, with an automatic check when no call is required and an automatic fold otherwise.
+- Added dealer, small-blind, big-blind, and latest-action indicators to every player seat.
+
+### Fixed
+
+- Made safe leave immediately visible and disabled repeated leave or betting actions while the current hand finishes.
+- Displayed the local player's committed chips and latest action without allowing the action console to cover them.
+- Rejected stale shared runtimes after the hand-state protocol gained action-clock and seat-action fields.
+
 ## [0.4.2] - 2026-08-22
 
 ### Fixed
@@ -72,6 +85,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.3]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.3
 [0.4.2]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.2
 [0.4.1]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.1
 [0.4.0]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.0

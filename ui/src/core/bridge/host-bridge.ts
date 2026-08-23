@@ -122,6 +122,8 @@ const EMPTY_HAND: HandSnapshot = Object.freeze({
   maximumRaiseTo: 0,
   canAct: false,
   awaitingReveal: false,
+  actionTimeoutMs: 30_000,
+  turnDeadlineUnixMs: null,
   seats: [],
   pendingSequence: null,
   transcriptHash: null,
@@ -722,12 +724,15 @@ class HostBridgeStore {
             maximumRaiseTo: event.maximum_raise_to,
             canAct: event.can_act,
             awaitingReveal: event.awaiting_reveal,
+            actionTimeoutMs: event.action_timeout_ms,
+            turnDeadlineUnixMs: event.turn_deadline_unix_ms,
             seats: event.seats.map((seat) => ({
               seat: seat.seat,
               playerId: seat.player_id,
               stack: seat.stack,
               committed: seat.committed,
               status: seat.status,
+              lastAction: seat.last_action,
             })),
             pendingSequence: null,
             transcriptHash: event.transcript_hash,
@@ -1042,7 +1047,7 @@ class HostBridgeStore {
           type: "hand_protocol_started",
           table_id: "8f3c58d35e4a9db2-preview-table",
           hand_number: 1,
-          seat: 2,
+          seat: 1,
           dealer_seat: 1,
           players: Array.from({ length: previewPlayers }, (_, index) => `preview-${String(index)}`),
           level_id: command.level_id,
@@ -1070,7 +1075,7 @@ class HostBridgeStore {
           type: "hand_ready",
           table_id: "8f3c58d35e4a9db2-preview-table",
           hand_number: 1,
-          seat: 2,
+          seat: 1,
           hole_cards: [
             { rank: 2, suit: "diamond" },
             { rank: 14, suit: "diamond" },
@@ -1085,13 +1090,15 @@ class HostBridgeStore {
           street: "preflop",
           pot: previewLevel.smallBlind + previewLevel.bigBlind,
           current_bet: previewLevel.bigBlind,
-          next_seat: 2,
-          local_seat: 2,
+          next_seat: 1,
+          local_seat: 1,
           to_call: previewLevel.smallBlind,
           minimum_raise_to: previewLevel.bigBlind * 2,
           maximum_raise_to: command.buy_in,
           can_act: true,
           awaiting_reveal: false,
+          action_timeout_ms: 30_000,
+          turn_deadline_unix_ms: Date.now() + 30_000,
           board: [],
           seats: Array.from({ length: previewPlayers }, (_, index) => ({
             seat: index + 1,
@@ -1102,6 +1109,7 @@ class HostBridgeStore {
             committed:
               index === 0 ? previewLevel.smallBlind : index === 1 ? previewLevel.bigBlind : 0,
             status: "active" as const,
+            last_action: null,
           })),
           transcript_hash: "8f3c58d35e4a9db2b6a00d54a1a8d88a",
         });
@@ -1257,6 +1265,15 @@ class HostBridgeStore {
         break;
       case "submit_action": {
         const hand = this.#snapshot.hand;
+        const localSeat = hand.localSeat;
+        const localState =
+          localSeat === null ? undefined : hand.seats.find((seat) => seat.seat === localSeat);
+        const contribution =
+          command.action === "raise"
+            ? Math.max(0, (command.amount ?? hand.currentBet) - (localState?.committed ?? 0))
+            : command.action === "call"
+              ? hand.toCall
+              : 0;
         this.#replace({
           ...this.#snapshot,
           hand: {
@@ -1267,6 +1284,10 @@ class HostBridgeStore {
         });
         globalThis.setTimeout(() => {
           const current = this.#snapshot.hand;
+          const nextSeat =
+            current.nextSeat === null
+              ? null
+              : (current.nextSeat % Math.max(2, current.players.length)) + 1;
           this.#replace({
             ...this.#snapshot,
             hand: {
@@ -1274,8 +1295,21 @@ class HostBridgeStore {
               sequence: current.sequence + 1,
               canAct: false,
               pendingSequence: null,
-              pot: current.pot + (command.action === "raise" ? (command.amount ?? 0) : current.toCall),
-              nextSeat: current.nextSeat === null ? null : (current.nextSeat % Math.max(2, current.players.length)) + 1,
+              pot: current.pot + contribution,
+              nextSeat,
+              turnDeadlineUnixMs:
+                nextSeat === null ? null : Date.now() + current.actionTimeoutMs,
+              seats: current.seats.map((seat) =>
+                seat.seat === localSeat
+                  ? {
+                      ...seat,
+                      stack: Math.max(0, seat.stack - contribution),
+                      committed: seat.committed + contribution,
+                      status: command.action === "fold" ? "folded" : seat.status,
+                      lastAction: command.action,
+                    }
+                  : seat,
+              ),
             },
           });
         }, 260);

@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::VecDeque;
 use thiserror::Error;
 
-pub const RUNTIME_PROTOCOL_VERSION: u16 = 3;
+pub const RUNTIME_PROTOCOL_VERSION: u16 = 4;
 const EVENT_LIMIT: usize = 4_096;
 const EVENT_BYTES_LIMIT: usize = 8 * 1_024 * 1_024;
 const WORKER_ARGUMENT_LIMIT: usize = 64;
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn 运行时协议要求先握手并拒绝共享内核退出命令() {
         assert!(matches!(
-            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":3}"#),
+            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":4}"#),
             Ok(RuntimeClientRequest::Attach)
         ));
         assert!(matches!(

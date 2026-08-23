@@ -20,7 +20,7 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
   process.env.LOCALAPPDATA = isolatedLocalAppData;
   process.env.TOKEN_HOLDEM_RUNTIME_PATH = join(pluginRoot, "bin", "token-holdem-runtime.exe");
   process.env.TOKEN_HOLDEM_SIDECAR_PATH = join(pluginRoot, "bin", "token-holdem-sidecar.exe");
-  process.env.TOKEN_HOLDEM_RUNTIME_PIPE = String.raw`\\.\pipe\token-holdem-runtime-v2-${randomBytes(12).toString("hex")}`;
+  process.env.TOKEN_HOLDEM_RUNTIME_PIPE = String.raw`\\.\pipe\token-holdem-runtime-v3-${randomBytes(12).toString("hex")}`;
   process.env.TOKEN_HOLDEM_RUNTIME_IDLE_TIMEOUT_SECONDS = "30";
 
   let first = null;
