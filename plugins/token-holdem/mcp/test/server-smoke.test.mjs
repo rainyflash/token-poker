@@ -13,6 +13,19 @@ const pluginRoot = process.env.TOKEN_HOLDEM_TEST_PLUGIN_ROOT
   : resolve(sourceMcpRoot, "..");
 const mcpRoot = join(pluginRoot, "mcp");
 
+test("Agent workflow discovers lazy plugin tools before diagnosing a load failure", async () => {
+  const skill = await readFile(
+    join(pluginRoot, "skills", "token-holdem", "SKILL.md"),
+    "utf8",
+  );
+
+  assert.match(skill, /mcp__token_holdem__token_holdem_open/u);
+  assert.match(skill, /deferred-tool discovery/u);
+  assert.match(skill, /does not reserve, lock, or consume the tool or runtime/u);
+  assert.match(skill, /Classify failures by the layer that actually failed/u);
+  assert.match(skill, /Never emit a prewritten compatibility diagnosis/u);
+});
+
 test("发布载荷清单覆盖 MCP UI 的全部磁盘依赖", async () => {
   const releaseContract = JSON.parse(
     await readFile(join(pluginRoot, "release-files.json"), "utf8"),
@@ -94,6 +107,10 @@ test("官方插件通过 MCP 读取官方账户用量并返回隔离牌桌资源
   await client.connect(transport);
   const tools = await client.listTools();
   const toolsByName = new Map(tools.tools.map((tool) => [tool.name, tool]));
+  assert.match(
+    toolsByName.get("token_holdem_open")?.description ?? "",
+    /without exclusive ownership/u,
+  );
   assert.deepEqual(
     toolsByName.get("token_holdem_refresh_official_usage")?._meta?.ui?.visibility,
     ["model", "app"],

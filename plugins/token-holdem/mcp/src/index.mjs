@@ -46,7 +46,7 @@ const server = new McpServer(
   { name: "token-holdem", version: manifest.version },
   {
     instructions:
-      "Token Poker is peer-to-peer poker inside Codex. Opening the table automatically reads lifetime Token through the official Codex App Server. Never open Settings, transcribe, or estimate Token. This server-side statistic is not a signed balance proof that opponents can verify independently.",
+      "Token Poker is peer-to-peer poker inside Codex. Each Codex task may attach to the same per-user shared runtime; another task or agent does not exclusively own it. Opening the table automatically reads lifetime Token through the official Codex App Server. Never open Settings, transcribe, or estimate Token. This server-side statistic is not a signed balance proof that opponents can verify independently.",
   },
 );
 
@@ -95,7 +95,7 @@ registerAppTool(
   {
     title: "Open or resume Token Poker",
     description:
-      "Open Token Poker inside Codex. If the shared runtime already has a game, reattach and restore it while reading official lifetime Token automatically.",
+      "Open Token Poker inside Codex. If the per-user shared runtime already has a game or another Codex task is attached, reattach without exclusive ownership and restore it while reading official lifetime Token automatically.",
     annotations: {
       readOnlyHint: false,
       destructiveHint: false,
