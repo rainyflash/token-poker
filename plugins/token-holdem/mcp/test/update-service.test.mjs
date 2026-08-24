@@ -22,7 +22,7 @@ const RELEASE = Object.freeze({
   }),
 });
 
-test("moves the update facade through check, verify, and detached install", async () => {
+test("moves the update facade through check, verify, and isolated install", async () => {
   const calls = [];
   const service = new UpdateService({
     currentVersion: "0.4.0",

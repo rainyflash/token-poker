@@ -1,5 +1,5 @@
 import { GitHubReleaseClient } from "./github-release-client.mjs";
-import { DetachedInstallerLauncher } from "./installer-launcher.mjs";
+import { InstallerLauncher } from "./installer-launcher.mjs";
 import { FileSystemPackageStager } from "./package-stager.mjs";
 import { UpdateService } from "./update-service.mjs";
 
@@ -8,6 +8,6 @@ export function createUpdateService({ currentVersion, pluginRoot }) {
     currentVersion,
     releaseClient: new GitHubReleaseClient(),
     packageStager: new FileSystemPackageStager({ pluginRoot }),
-    installerLauncher: new DetachedInstallerLauncher(),
+    installerLauncher: new InstallerLauncher(),
   });
 }

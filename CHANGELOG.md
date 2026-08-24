@@ -2,6 +2,25 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.8] - 2026-08-23
+
+### Fixed
+
+- Launch the Windows updater as a supervised child process so PowerShell cannot report success without executing the installer script.
+- Isolate Windows PowerShell 5.1 from Codex's bundled PowerShell 7 module path, restoring built-in commands such as `Get-FileHash`.
+- Wait for the atomic updater result to become visible after process exit instead of misreporting a short filesystem delay as `ENOENT`.
+- Include the updater exit status and log path in missing-result errors, and preserve PowerShell invocation and stack details in the install log.
+- Replace a probabilistic roster-coordinator fixture that could randomly fail an otherwise valid release build.
+
+### Added
+
+- Added a real Windows PowerShell regression test that launches from Node.js with a deliberately poisoned `PSModulePath`.
+- Added one checked version command for the Cargo workspace, npm packages, plugin manifest, and lockfiles.
+
+### Upgrade note
+
+- Versions 0.4.7 and earlier contain the broken updater launcher and cannot reliably repair themselves online. Install 0.4.8 once from the extracted release ZIP; online updates after 0.4.8 use the corrected launcher.
+
 ## [0.4.7] - 2026-08-23
 
 ### Fixed
@@ -126,6 +145,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.8]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.8
 [0.4.7]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.7
 [0.4.6]: https://github.com/rainyflash/token-poker/compare/v0.4.4...7c7a9cd
 [0.4.4]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.4

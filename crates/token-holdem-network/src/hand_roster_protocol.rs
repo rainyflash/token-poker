@@ -737,12 +737,14 @@ mod tests {
     #[test]
     fn 逐手协调者必须继承最小物理席位而不是随机声明顺序() {
         let table_id = TableId::new([9; 32]);
-        let first = fixture(1, table_id);
-        let second = (2..=u8::MAX)
-            .map(|seed| fixture(seed, table_id))
-            .find(|candidate| candidate.join.claim_id() < first.join.claim_id())
-            .expect("应能构造声明编号小于首席玩家的测试成员");
-        let fixtures = [first, second];
+        let left = fixture(1, table_id);
+        let right = fixture(2, table_id);
+        let fixtures = if left.join.claim_id() > right.join.claim_id() {
+            [left, right]
+        } else {
+            [right, left]
+        };
+        assert!(fixtures[1].join.claim_id() < fixtures[0].join.claim_id());
         let membership = membership(&fixtures);
         let domain_membership = membership
             .proposal()

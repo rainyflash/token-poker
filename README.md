@@ -167,9 +167,9 @@ The stable update manifest is available at:
 https://github.com/rainyflash/token-poker/releases/latest/download/latest.json
 ```
 
-Token Poker checks this manifest when its UI opens. A user can download the release into isolated local staging, verify the declared size and SHA-256 digest, and explicitly confirm installation. A detached PowerShell helper validates every archive path and package-manifest file before the existing Codex CLI installer replaces the plugin. Token Poker never overwrites its own running binaries. Manual bootstrap installations use the double-click CMD entrypoint; later updates continue through the in-app flow.
+Token Poker checks this manifest when its UI opens. A user can download the release into isolated local staging, verify the declared size and SHA-256 digest, and explicitly confirm installation. A supervised PowerShell helper validates every archive path and package-manifest file before the existing Codex CLI installer replaces the plugin. Token Poker never overwrites its own running binaries. Manual bootstrap installations use the double-click CMD entrypoint; later updates continue through the in-app flow.
 
-Version 0.4.0 is the updater bootstrap release. Older versions cannot add updater code to themselves, so users on 0.3.x must install 0.4.0 manually once. Later stable releases can use the in-app flow.
+Versions 0.4.7 and earlier contain a Windows updater-launch defect and cannot reliably repair themselves online. Install 0.4.8 once with `Install Token Poker.cmd`; later stable releases can use the corrected in-app flow.
 
 See [Plugin distribution](./docs/PLUGIN-DISTRIBUTION.md) for the release contract.
 

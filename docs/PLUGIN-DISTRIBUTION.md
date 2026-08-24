@@ -92,9 +92,9 @@ The stable discovery URL is:
 https://github.com/rainyflash/token-poker/releases/latest/download/latest.json
 ```
 
-The in-app updater rejects unknown schemas, malformed semantic versions, unexpected repositories, unsupported targets, invalid sizes, untrusted redirects, archive traversal, undeclared package files, and SHA-256 mismatches. It stages files outside the plugin cache and uses a detached process so active MCP and sidecar binaries are never overwritten in place.
+The in-app updater rejects unknown schemas, malformed semantic versions, unexpected repositories, unsupported targets, invalid sizes, untrusted redirects, archive traversal, undeclared package files, and SHA-256 mismatches. It stages files outside the plugin cache and supervises an isolated Windows PowerShell process so active MCP and sidecar binaries are never overwritten in place.
 
-Version 0.4.0 is the updater bootstrap release. Install it manually when upgrading from 0.3.x; subsequent stable releases can be checked, downloaded, verified, and confirmed inside Token Poker. Current manual packages expose `Install Token Poker.cmd` as their only user-facing installation entrypoint.
+Versions 0.4.7 and earlier contain a Windows updater-launch defect and cannot reliably repair themselves online. Install 0.4.8 once with `Install Token Poker.cmd`; later stable releases can be checked, downloaded, verified, and confirmed inside Token Poker. Current manual packages expose that command file as their only user-facing installation entrypoint.
 
 ## Integrity and risk
 

@@ -83,6 +83,7 @@ jobs:
           ./scripts/test-forward-update-contract.ps1
           python -m py_compile scripts/build-plugin.py
           python -m py_compile scripts/check-rust-security-baseline.py
+          python -m py_compile scripts/set-version.py
           python scripts/check-rust-security-baseline.py
           python scripts/check-source-language.py
           node --test scripts/community-network.test.mjs

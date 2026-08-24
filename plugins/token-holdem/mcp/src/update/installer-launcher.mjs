@@ -1,28 +1,42 @@
 import { spawn } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 const DEFAULT_INSTALL_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_RESULT_TIMEOUT_MS = 5_000;
+const DEFAULT_RESULT_RETRY_DELAY_MS = 50;
 
-export class DetachedInstallerLauncher {
+export class InstallerLauncher {
+  #environment;
   #spawn;
   #resolvePowerShell;
+  #resultTimeoutMs;
   #timeoutMs;
 
   constructor({
+    environment = process.env,
     spawnImpl = spawn,
-    powershellResolver = resolvePowerShell,
+    powershellResolver = () => resolvePowerShell(environment),
+    resultTimeoutMs = DEFAULT_RESULT_TIMEOUT_MS,
     timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
   } = {}) {
+    if (typeof environment !== "object" || environment === null) {
+      throw new Error("A process environment is required");
+    }
     if (typeof spawnImpl !== "function") throw new Error("A process launcher is required");
     if (typeof powershellResolver !== "function") {
       throw new Error("A PowerShell resolver is required");
     }
+    if (!Number.isSafeInteger(resultTimeoutMs) || resultTimeoutMs <= 0) {
+      throw new Error("The installer result timeout must be a positive integer");
+    }
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
       throw new Error("The installer timeout must be a positive integer");
     }
+    this.#environment = Object.freeze({ ...environment });
     this.#spawn = spawnImpl;
     this.#resolvePowerShell = powershellResolver;
+    this.#resultTimeoutMs = resultTimeoutMs;
     this.#timeoutMs = timeoutMs;
   }
 
@@ -52,13 +66,27 @@ export class DetachedInstallerLauncher {
         "0",
       ],
       {
-        detached: true,
+        detached: false,
+        env: createWindowsPowerShellEnvironment(this.#environment),
         stdio: "ignore",
         windowsHide: true,
       },
     );
     const processResult = await waitForInstallerExit(child, this.#timeoutMs);
-    const result = await readInstallerResult(prepared.resultPath, release.version);
+    let result;
+    try {
+      result = await waitForInstallerResult(
+        prepared.resultPath,
+        release.version,
+        this.#resultTimeoutMs,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown result error";
+      const processDetail = formatProcessExit(processResult);
+      throw new Error(
+        `The updater ${processDetail} without a valid result: ${detail}. See ${prepared.logPath}`,
+      );
+    }
     if (processResult.code !== 0 || result.status !== "succeeded") {
       const detail = result.message.length > 0 ? result.message : "The installer failed";
       throw new Error(`${detail} See ${prepared.logPath}`);
@@ -95,6 +123,47 @@ export async function readInstallerResult(path, expectedVersion) {
   });
 }
 
+export async function waitForInstallerResult(
+  path,
+  expectedVersion,
+  timeoutMs = DEFAULT_RESULT_TIMEOUT_MS,
+) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("The installer result timeout must be a positive integer");
+  }
+  const deadline = Date.now() + timeoutMs;
+  let latestError;
+  do {
+    try {
+      return await readInstallerResult(path, expectedVersion);
+    } catch (error) {
+      latestError = error;
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await delay(Math.min(DEFAULT_RESULT_RETRY_DELAY_MS, remainingMs));
+  } while (Date.now() <= deadline);
+  throw latestError;
+}
+
+export function createWindowsPowerShellEnvironment(environment = process.env) {
+  const sanitized = { ...environment };
+  for (const key of Object.keys(sanitized)) {
+    if (key.toLowerCase() === "psmodulepath") delete sanitized[key];
+  }
+  const systemRoot = getEnvironmentValue(environment, "SystemRoot");
+  if (systemRoot === null) return sanitized;
+
+  const modulePaths = [];
+  const programFiles = getEnvironmentValue(environment, "ProgramFiles");
+  if (programFiles !== null) {
+    modulePaths.push(join(programFiles, "WindowsPowerShell", "Modules"));
+  }
+  modulePaths.push(join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules"));
+  sanitized.PSModulePath = [...new Set(modulePaths)].join(delimiter);
+  return sanitized;
+}
+
 function waitForInstallerExit(child, timeoutMs) {
   return new Promise((resolveExit, rejectExit) => {
     let settled = false;
@@ -119,9 +188,29 @@ function waitForInstallerExit(child, timeoutMs) {
   });
 }
 
-async function resolvePowerShell() {
-  const systemRoot = process.env.SystemRoot;
-  if (typeof systemRoot === "string" && systemRoot.length > 0) {
+function formatProcessExit({ code, signal }) {
+  if (Number.isInteger(code)) return `exited with code ${code}`;
+  if (typeof signal === "string" && signal.length > 0) {
+    return `terminated after signal ${signal}`;
+  }
+  return "terminated";
+}
+
+function delay(milliseconds) {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+function getEnvironmentValue(environment, name) {
+  const key = Object.keys(environment).find(
+    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
+  );
+  const value = key === undefined ? undefined : environment[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+async function resolvePowerShell(environment = process.env) {
+  const systemRoot = getEnvironmentValue(environment, "SystemRoot");
+  if (systemRoot !== null) {
     const candidate = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
     try {
       await access(candidate);

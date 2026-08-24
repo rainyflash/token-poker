@@ -240,7 +240,13 @@ try {
 }
 catch {
     $failureMessage = $_.Exception.Message
-    $failureMessage | Add-Content -LiteralPath $logPath -Encoding UTF8
+    @(
+        $failureMessage
+        $_.InvocationInfo.PositionMessage
+        $_.ScriptStackTrace
+    ) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Add-Content -LiteralPath $logPath -Encoding UTF8
     Write-UpdateResult -Status 'failed' -Message $failureMessage
     exit 1
 }
