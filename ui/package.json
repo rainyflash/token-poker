@@ -1,7 +1,7 @@
 {
   "name": "token-holdem-ui",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.4.6",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",

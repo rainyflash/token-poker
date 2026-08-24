@@ -2,6 +2,21 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.6] - 2026-08-23
+
+### Fixed
+
+- Stop orphaned UI polling when Codex tears down an iframe, unloads a task, or reports a terminal `thread not found` error.
+- Abort the underlying MCP request on timeout or teardown instead of leaving hidden calls alive after the UI disappears.
+- Disable automatic size observation in fullscreen and picture-in-picture modes, while retaining explicit resize notifications for inline rendering.
+- Keep a visible boot or render failure panel when the host bridge or React tree cannot initialize instead of presenting a blank page.
+- Guard the connection handshake so an iframe closed during startup cannot issue late display-mode or polling requests.
+
+### Added
+
+- Added executable lifecycle regression tests for teardown, terminal host errors, request cancellation, display-mode resizing, and broken UI dependencies.
+- Added a forward-update contract test so every release proves it can install its immediate successor before publication.
+
 ## [0.4.4] - 2026-08-23
 
 ### Fixed
@@ -94,6 +109,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.6]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.6
 [0.4.4]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.4
 [0.4.3]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.3
 [0.4.2]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.2

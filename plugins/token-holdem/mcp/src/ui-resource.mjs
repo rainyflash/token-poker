@@ -23,13 +23,23 @@ export async function buildTokenHoldemHtml(pluginRoot, version) {
     <title>Token Poker</title>
     <style>
       html, body, #token-holdem-root { width: 100%; height: 100%; min-height: 100%; margin: 0; overflow: hidden; }
+      #token-holdem-root { position: relative; }
+      #token-poker-boot-status {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #6f6f6f;
+        background: #fff;
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
       #token-holdem-portals { position: relative; z-index: 1000; }
       ${styleSource}
     </style>
     <script>${escapeInlineScript(appClient)}</script>
   </head>
   <body>
-    <div id="token-holdem-root"></div>
+    <div id="token-holdem-root"><div id="token-poker-boot-status" role="status" aria-live="polite">Opening Token Poker…</div></div>
     <div id="token-holdem-portals"></div>
     <script>${escapeInlineScript(buildHostBridge(version))}</script>
     <script>${escapeInlineScript(uiBundle)}</script>
@@ -60,7 +70,7 @@ function exposeBrowserExports(source, exportNames) {
   ].join("");
 }
 
-function buildHostBridge(version) {
+export function buildHostBridge(version) {
   return `(() => {
   "use strict";
 
@@ -68,7 +78,11 @@ function buildHostBridge(version) {
   const mountRoot = document.getElementById("token-holdem-root");
   const portalRoot = document.getElementById("token-holdem-portals");
   if (!apps || typeof apps.App !== "function" || !mountRoot || !portalRoot) {
-    throw new Error("Token Poker MCP host initialization failed");
+    const message = "Token Poker could not initialize its Codex host bridge. Reopen the plugin or repair the installation.";
+    globalThis.__tokenHoldemBootError = message;
+    const bootStatus = document.getElementById("token-poker-boot-status");
+    if (bootStatus) bootStatus.textContent = message;
+    return;
   }
 
   globalThis.__tokenHoldemBridgeInstalled = true;
@@ -92,14 +106,83 @@ function buildHostBridge(version) {
 
   let latestSequence = 0;
   let stopped = false;
+  let resizeCleanup = null;
+  let resizeSetupFailed = false;
+  let displayModeSettled = false;
   let commandQueue = Promise.resolve();
   let updateQueue = Promise.resolve();
+  const sessionController = new AbortController();
   const app = new apps.App(
     { name: "token-holdem", version: ${JSON.stringify(version)} },
     { availableDisplayModes: ["inline", "pip", "fullscreen"] },
-    { autoResize: true },
+    { autoResize: false },
   );
   globalThis.__TOKEN_HOLDEM_MCP_APP__ = app;
+
+  function errorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function sessionStoppedError(reason) {
+    const error = new Error(reason || "Token Poker UI session stopped");
+    error.name = "SessionStoppedError";
+    return error;
+  }
+
+  function isExpectedStop(error) {
+    return stopped || error?.name === "SessionStoppedError" ||
+      sessionController.signal.aborted;
+  }
+
+  function isTerminalHostError(error) {
+    return /thread not found|resource.*(?:teardown|unmounted)|session.*(?:closed|disposed|terminated)|transport.*(?:closed|disconnected)|connection.*(?:closed|disposed)|protocol.*(?:closed|disconnected)/iu.test(
+      errorMessage(error),
+    );
+  }
+
+  function stopResizeNotifications() {
+    if (typeof resizeCleanup !== "function") return;
+    const cleanup = resizeCleanup;
+    resizeCleanup = null;
+    try {
+      cleanup();
+    } catch (error) {
+      console.warn("Token Poker could not stop inline resize notifications", error);
+    }
+  }
+
+  function syncResizeNotifications(displayMode) {
+    if (!displayModeSettled || stopped) return;
+    if (displayMode === "inline") {
+      if (resizeCleanup === null && !resizeSetupFailed) {
+        try {
+          resizeCleanup = app.setupSizeChangedNotifications();
+        } catch (error) {
+          resizeSetupFailed = true;
+          publishWarning("Inline resize notifications are unavailable: " + errorMessage(error));
+        }
+      }
+      return;
+    }
+    resizeSetupFailed = false;
+    stopResizeNotifications();
+  }
+
+  function stopSession(reason) {
+    if (stopped) return;
+    stopped = true;
+    stopResizeNotifications();
+    globalThis.removeEventListener("pagehide", handlePageHide);
+    app.removeEventListener("hostcontextchanged", applyHostContext);
+    app.removeEventListener("toolresult", consumeResult);
+    sessionController.abort(sessionStoppedError(reason));
+  }
+
+  function handlePageHide() {
+    stopSession("Token Poker iframe was unloaded");
+  }
+
+  globalThis.addEventListener("pagehide", handlePageHide, { once: true });
 
   function publishSidecarEvent(detail) {
     if (detail && detail.type === "token_snapshot_accepted") {
@@ -128,6 +211,12 @@ function buildHostBridge(version) {
 
   function publishWarning(message) {
     publishSidecarEvent({ type: "warning", message: String(message) });
+  }
+
+  function publishFatal(message) {
+    const detail = String(message);
+    globalThis.__tokenHoldemBootError = detail;
+    globalThis.dispatchEvent(new CustomEvent("token-holdem:fatal", { detail }));
   }
 
   function publishOfficialUsageState(phase, error = null) {
@@ -203,19 +292,39 @@ function buildHostBridge(version) {
 
   async function callTool(name, argumentsValue, timeoutMs = 30_000) {
     await app.ready;
-    let timeout;
-    const timer = new Promise((_, reject) => {
-      timeout = setTimeout(() => reject(new Error("Plugin tool call timed out")), timeoutMs);
+    if (stopped) throw sessionStoppedError("Token Poker UI session already stopped");
+    const callController = new AbortController();
+    const timeoutError = new Error("Plugin tool call timed out: " + name);
+    timeoutError.name = "TimeoutError";
+    const forwardSessionAbort = () => {
+      callController.abort(sessionController.signal.reason ?? sessionStoppedError());
+    };
+    if (sessionController.signal.aborted) {
+      forwardSessionAbort();
+    } else {
+      sessionController.signal.addEventListener("abort", forwardSessionAbort, { once: true });
+    }
+    let rejectOnAbort;
+    const aborted = new Promise((_, reject) => {
+      rejectOnAbort = () => reject(callController.signal.reason ?? sessionStoppedError());
+      if (callController.signal.aborted) rejectOnAbort();
+      else callController.signal.addEventListener("abort", rejectOnAbort, { once: true });
     });
+    const timeout = setTimeout(() => callController.abort(timeoutError), timeoutMs);
     try {
       const result = await Promise.race([
-        app.callServerTool({ name, arguments: argumentsValue }),
-        timer,
+        app.callServerTool(
+          { name, arguments: argumentsValue },
+          { signal: callController.signal },
+        ),
+        aborted,
       ]);
       consumeResult(result);
       return result;
     } finally {
       clearTimeout(timeout);
+      sessionController.signal.removeEventListener("abort", forwardSessionAbort);
+      callController.signal.removeEventListener("abort", rejectOnAbort);
     }
   }
 
@@ -224,6 +333,7 @@ function buildHostBridge(version) {
     try {
       await callTool("token_holdem_refresh_official_usage", {});
     } catch (error) {
+      if (isExpectedStop(error)) return;
       publishOfficialUsageState("error", error instanceof Error ? error.message : String(error));
       throw error;
     }
@@ -234,6 +344,7 @@ function buildHostBridge(version) {
     try {
       await callTool(name, {}, timeoutMs);
     } catch (error) {
+      if (isExpectedStop(error)) return;
       publishUpdateStatus({
         ...globalThis.__tokenPokerUpdateStatus,
         phase: "error",
@@ -250,10 +361,19 @@ function buildHostBridge(version) {
       publishWarning("The table sent an invalid command");
       return;
     }
+    if (command?.type === "close_ui") {
+      app.requestTeardown({}).catch((error) => {
+        if (!isExpectedStop(error)) publishWarning(errorMessage(error));
+      });
+      return;
+    }
+    if (stopped) return;
     if (command?.type === "request_token_refresh") {
       commandQueue = commandQueue
         .then(refreshOfficialUsage)
-        .catch((error) => publishWarning(error instanceof Error ? error.message : String(error)));
+        .catch((error) => {
+          if (!isExpectedStop(error)) publishWarning(errorMessage(error));
+        });
       return;
     }
     const updateTools = {
@@ -266,33 +386,61 @@ function buildHostBridge(version) {
       updateQueue = updateQueue.then(() => runUpdateTool(toolName, pendingPhase, timeoutMs));
       return;
     }
-    if (command?.type === "close_ui") {
-      stopped = true;
-      app.requestTeardown({}).catch(() => undefined);
-      return;
-    }
     commandQueue = commandQueue
       .then(() => callTool("token_holdem_command", { command }))
-      .catch((error) => publishWarning(error instanceof Error ? error.message : String(error)));
+      .catch((error) => {
+        if (!isExpectedStop(error)) publishWarning(errorMessage(error));
+      });
   };
+
+  function abortableDelay(delayMs) {
+    if (stopped) return Promise.resolve();
+    return new Promise((resolveDelay) => {
+      const timeout = setTimeout(finish, delayMs);
+      function finish() {
+        clearTimeout(timeout);
+        sessionController.signal.removeEventListener("abort", finish);
+        resolveDelay();
+      }
+      sessionController.signal.addEventListener("abort", finish, { once: true });
+    });
+  }
 
   async function pollLoop() {
     while (!stopped) {
       try {
-        await callTool(
+        const result = await callTool(
           "token_holdem_poll",
           { after_sequence: latestSequence, wait_ms: 20_000 },
           30_000,
         );
+        if (result?.isError) {
+          const message = resultError(result);
+          if (isTerminalHostError(message)) {
+            publishFatal(message);
+            stopSession(message);
+            return;
+          }
+          await abortableDelay(1_000);
+        }
       } catch (error) {
-        publishWarning(error instanceof Error ? error.message : String(error));
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+        if (isExpectedStop(error)) return;
+        if (isTerminalHostError(error)) {
+          publishFatal(errorMessage(error));
+          stopSession(errorMessage(error));
+          return;
+        }
+        publishWarning(errorMessage(error));
+        await abortableDelay(1_000);
       }
     }
   }
 
   function applyHostContext(context) {
     if (!context) return;
+    if (displayModeSettled) {
+      syncResizeNotifications(context.displayMode ?? app.getHostContext?.()?.displayMode);
+    }
     try {
       if (context.theme && typeof apps.applyDocumentTheme === "function") {
         apps.applyDocumentTheme(context.theme);
@@ -310,18 +458,30 @@ function buildHostBridge(version) {
 
   app.addEventListener("hostcontextchanged", applyHostContext);
   app.addEventListener("toolresult", consumeResult);
+  app.onteardown = async () => {
+    stopSession("Codex host tore down the Token Poker UI");
+    return {};
+  };
   app.ready = app.connect()
     .then(async () => {
-      applyHostContext(app.getHostContext?.());
-      await app.requestDisplayMode({ mode: "fullscreen" }).catch(() => undefined);
+      if (stopped) return;
+      const initialContext = app.getHostContext?.();
+      applyHostContext(initialContext);
+      const displayResult = await app.requestDisplayMode({ mode: "fullscreen" }).catch(() => null);
+      displayModeSettled = true;
+      syncResizeNotifications(displayResult?.mode ?? initialContext?.displayMode);
+      if (stopped) return;
       updateQueue = updateQueue.then(() =>
         runUpdateTool("token_holdem_check_update", "checking", 45_000),
       );
       void pollLoop();
     })
     .catch((error) => {
-      publishWarning(error instanceof Error ? error.message : String(error));
-      throw error;
+      if (!isExpectedStop(error)) {
+        publishFatal(errorMessage(error));
+        publishWarning(errorMessage(error));
+      }
+      stopSession(errorMessage(error));
     });
 })();`;
 }

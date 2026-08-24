@@ -109,6 +109,9 @@ test("官方插件通过 MCP 读取官方账户用量并返回隔离牌桌资源
   assert.equal(typeof html, "string");
   assert.match(html, /__tokenHoldemBridgeInstalled/u);
   assert.match(html, /token_holdem_poll/u);
+  assert.match(html, /token-poker-boot-status/u);
+  assert.match(html, /autoResize: false/u);
+  assert.match(html, /app\.onteardown/u);
 
   const synchronized = await client.callTool({
     name: "token_holdem_open",

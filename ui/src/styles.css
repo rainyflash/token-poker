@@ -30,6 +30,68 @@ body {
   overflow: hidden;
 }
 
+.token-poker-fatal {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  padding: 32px;
+  color: var(--codex-text);
+  background: var(--codex-surface);
+}
+
+.token-poker-fatal-card {
+  display: grid;
+  width: min(520px, 100%);
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid var(--codex-border);
+  border-radius: 18px;
+  background: var(--codex-surface);
+  box-shadow: var(--codex-shadow-lg);
+}
+
+.token-poker-fatal-card :is(h1, p) {
+  margin: 0;
+}
+
+.token-poker-fatal-card h1 {
+  font-size: 24px;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.token-poker-fatal-card p,
+.token-poker-fatal-card code {
+  color: var(--codex-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.token-poker-fatal-card code {
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--codex-surface-under);
+}
+
+.token-poker-fatal-card button {
+  justify-self: start;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--codex-gray-0);
+  background: var(--codex-gray-1000);
+  cursor: pointer;
+}
+
+.token-poker-fatal-kicker {
+  color: var(--codex-text-tertiary);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+}
+
 button,
 input,
 textarea {

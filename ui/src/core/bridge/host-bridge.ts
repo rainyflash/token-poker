@@ -35,6 +35,7 @@ declare global {
   var __tokenHoldemMountRoot: HTMLElement | undefined;
   var __tokenHoldemPortalRoot: HTMLElement | undefined;
   var __tokenHoldemCodexMarkSource: string | undefined;
+  var __tokenHoldemBootError: string | undefined;
   var tokenHoldemCommand: ((payload: string) => void) | undefined;
 }
 
