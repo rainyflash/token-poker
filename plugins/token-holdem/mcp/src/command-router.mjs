@@ -7,6 +7,10 @@ export async function dispatchHostCommand(runtime, command, requestId) {
     await runtime.ensureIdentity(command, requestId);
     return "confirmed";
   }
+  if (command.type === "leave_table") {
+    await runtime.leaveTable(command, requestId);
+    return "confirmed";
+  }
   await runtime.send(command);
   return "accepted";
 }

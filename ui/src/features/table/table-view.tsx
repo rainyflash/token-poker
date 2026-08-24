@@ -4,6 +4,7 @@ import { useState } from "react";
 import type {
   BridgeSnapshot,
   CommandResult,
+  ConfirmedHostCommandSender,
   HostCommand,
 } from "../../core/bridge/contracts";
 import { useI18n } from "../../core/i18n/use-i18n";
@@ -11,6 +12,7 @@ import type { MessageKey } from "../../core/i18n/messages";
 import { projectPlayerProfile } from "../account/model/player-profile";
 import { Button } from "../../shared/ui/button";
 import { StatusPill } from "../../shared/ui/status-pill";
+import { useSafeLeave } from "../session/model/use-safe-leave";
 import { ActionConsole } from "./components/action-console";
 import { HandInfoPanel } from "./components/hand-info-panel";
 import { PokerTable } from "./components/poker-table";
@@ -18,18 +20,19 @@ import { PokerTable } from "./components/poker-table";
 interface TableViewProps {
   readonly bridge: BridgeSnapshot;
   readonly sendCommand: (command: HostCommand) => CommandResult;
+  readonly sendConfirmedCommand: ConfirmedHostCommandSender;
   readonly onOpenStatistics: () => void;
 }
 
-export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewProps) {
+export function TableView({ bridge, sendCommand, sendConfirmedCommand, onOpenStatistics }: TableViewProps) {
   const { t, formatTokens } = useI18n();
   const [requestedBetAmount, setRequestedBetAmount] = useState(0);
   const [actionFeedback, setActionFeedback] = useState<{
     readonly sequence: number;
     readonly message: string;
   } | null>(null);
-  const [leaveRequested, setLeaveRequested] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const safeLeave = useSafeLeave(sendConfirmedCommand, t("bridge.commandFailed"));
   const hand = bridge.hand;
   const profile = projectPlayerProfile(
     bridge.tokenSnapshot,
@@ -43,7 +46,7 @@ export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewPr
   const minimumRaise = hand.minimumRaiseTo;
   const maximumRaise = hand.maximumRaiseTo;
   const betAmount = Math.min(maximumRaise, Math.max(minimumRaise, requestedBetAmount));
-  const leaving = leaveRequested || bridge.room.localRole === "leaving";
+  const leaving = safeLeave.isPending || bridge.room.localRole === "leaving";
   const canAct =
     hand.canAct && hand.pendingSequence === null && !hand.sessionInterrupted && !leaving;
   const awaitingReveal = hand.awaitingReveal;
@@ -86,6 +89,8 @@ export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewPr
   const actionMessage =
     leaving
       ? t("table.leaving")
+      : safeLeave.state.status === "failed"
+        ? safeLeave.state.error
       : actionFeedback?.sequence === hand.sequence
         ? actionFeedback.message
         : null;
@@ -112,12 +117,7 @@ export function TableView({ bridge, sendCommand, onOpenStatistics }: TableViewPr
 
   const leaveTable = (): void => {
     if (leaving) return;
-    const result = sendCommand({ type: "leave_table" });
-    if (!result.ok) {
-      setActionFeedback({ sequence: hand.sequence, message: result.error });
-      return;
-    }
-    setLeaveRequested(true);
+    void safeLeave.request();
   };
 
   return (

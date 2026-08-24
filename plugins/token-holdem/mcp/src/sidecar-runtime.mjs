@@ -22,6 +22,7 @@ const CONNECT_TIMEOUT_MS = 15_000;
 const CONNECT_RETRY_MS = 100;
 const TOKEN_ACK_TIMEOUT_MS = 10_000;
 const IDENTITY_ACK_TIMEOUT_MS = 10_000;
+const COMMAND_ACK_TIMEOUT_MS = 10_000;
 export const MAX_POLL_WAIT_MS = 25_000;
 
 export class SidecarRuntime {
@@ -89,34 +90,27 @@ export class SidecarRuntime {
   }
 
   async ensureIdentity(command, requestId) {
-    validateRequestId(requestId);
-    const initialSequence = this.#sequence;
-    await this.send({ ...command, request_id: requestId });
-    let cursor = initialSequence;
-    const deadline = Date.now() + IDENTITY_ACK_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const batch = await this.waitForEvents(
-        cursor,
-        Math.min(1_000, Math.max(0, deadline - Date.now())),
-      );
-      for (const entry of batch.events) {
-        if (entry.event?.request_id !== requestId) continue;
-        if (entry.event.type === "identity_ready") {
-          const identity = parseIdentitySnapshot(entry.event);
-          if (identity === null) throw new Error("牌局内核返回了无效的玩家身份确认");
-          return identity;
-        }
-        if (entry.event.type === "command_failed") {
-          throw new Error(
-            typeof entry.event.message === "string"
-              ? entry.event.message
-              : "牌局内核拒绝了玩家身份命令",
-          );
-        }
-      }
-      cursor = batch.latest_sequence;
-    }
-    throw new Error("牌局内核未在超时前确认玩家身份");
+    const event = await this.#sendConfirmedCommand(
+      command,
+      requestId,
+      IDENTITY_ACK_TIMEOUT_MS,
+      (candidate) => candidate.type === "identity_ready",
+      "牌局内核未在超时前确认玩家身份",
+    );
+    const identity = parseIdentitySnapshot(event);
+    if (identity === null) throw new Error("牌局内核返回了无效的玩家身份确认");
+    return identity;
+  }
+
+  async leaveTable(command, requestId) {
+    await this.#sendConfirmedCommand(
+      command,
+      requestId,
+      COMMAND_ACK_TIMEOUT_MS,
+      (candidate) =>
+        candidate.type === "command_confirmed" && candidate.command_type === "leave_table",
+      "牌局内核未在超时前确认离桌请求",
+    );
   }
 
   async publishTokenSnapshot(command) {
@@ -139,6 +133,32 @@ export class SidecarRuntime {
       cursor = batch.latest_sequence;
     }
     throw new Error("牌局内核未在超时前确认官方 Token 快照");
+  }
+
+  async #sendConfirmedCommand(command, requestId, timeoutMs, isConfirmation, timeoutMessage) {
+    validateRequestId(requestId);
+    const initialSequence = this.#sequence;
+    await this.send({ ...command, request_id: requestId });
+    let cursor = initialSequence;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const batch = await this.waitForEvents(
+        cursor,
+        Math.min(1_000, Math.max(0, deadline - Date.now())),
+      );
+      for (const entry of batch.events) {
+        const event = entry.event;
+        if (event?.request_id !== requestId) continue;
+        if (event.type === "command_failed") {
+          throw new Error(
+            typeof event.message === "string" ? event.message : "牌局内核拒绝了控制命令",
+          );
+        }
+        if (isConfirmation(event)) return event;
+      }
+      cursor = batch.latest_sequence;
+    }
+    throw new Error(timeoutMessage);
   }
 
   async setVolunteerConsent(enabled) {
@@ -491,12 +511,20 @@ export class SidecarRuntime {
       this.#roomActive = true;
     }
     if (eventType === "pool_cancelled") this.#poolActive = false;
-    if (eventType === "room_closed") this.#roomActive = false;
+    if (eventType === "safe_leave_completed") {
+      this.#poolActive = false;
+      this.#roomActive = false;
+      this.#handActive = false;
+    }
+    if (eventType === "room_closed") {
+      this.#roomActive = false;
+      this.#handActive = false;
+    }
     if (["hand_protocol_started", "hand_ready", "hand_state"].includes(eventType)) {
       this.#handActive = true;
       this.#roomActive = true;
     }
-    if (eventType === "hand_left") {
+    if (eventType === "hand_left" || eventType === "hand_aborted_for_leave") {
       this.#handActive = false;
     }
   }

@@ -454,6 +454,41 @@ test("身份命令拒绝只有入队而没有内核确认的回执", async () =>
   await harness.app.onteardown({}, {});
 });
 
+test("离桌命令拒绝只有入队而没有内核确认的回执", async () => {
+  const harness = createHarness({
+    callServerTool(params, requestOptions) {
+      if (params.name === "token_holdem_command") {
+        return Promise.resolve({
+          structuredContent: {
+            command_result: {
+              request_id: params.arguments.request_id,
+              status: "accepted",
+              error: null,
+            },
+          },
+        });
+      }
+      if (params.name === "token_holdem_poll") {
+        return new Promise((_resolve, reject) => {
+          requestOptions.signal.addEventListener(
+            "abort",
+            () => reject(requestOptions.signal.reason),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve({ structuredContent: {} });
+    },
+  });
+  await harness.ready();
+
+  const outcome = await harness.command(JSON.stringify({ type: "leave_table" }));
+
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.error, /did not confirm the leave-table command/u);
+  await harness.app.onteardown({}, {});
+});
+
 test("visibility 恢复会重建 inline 尺寸监听并触发重绘", async () => {
   const harness = createHarness();
   await harness.ready();

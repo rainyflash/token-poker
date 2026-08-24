@@ -87,6 +87,7 @@ export class SessionEventProjection {
         this.#slots.set(SLOT.nextHand, entry);
         break;
       case "safe_leave_requested":
+      case "safe_leave_forced":
         this.#slots.set(SLOT.safeLeave, entry);
         break;
       case "safe_leave_completed":
@@ -112,6 +113,7 @@ export class SessionEventProjection {
         this.#slots.set(SLOT.handState, entry);
         break;
       case "hand_left":
+      case "hand_aborted_for_leave":
         this.#clearHand();
         break;
       default:

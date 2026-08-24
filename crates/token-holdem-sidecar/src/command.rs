@@ -70,7 +70,9 @@ pub enum SidecarCommand {
         action: String,
         amount: Option<u64>,
     },
-    LeaveTable,
+    LeaveTable {
+        request_id: Option<String>,
+    },
     Shutdown,
 }
 
@@ -113,7 +115,9 @@ impl SidecarCommand {
     #[must_use]
     pub fn request_id(&self) -> Option<&str> {
         match self {
-            Self::EnsureIdentity { request_id, .. } => request_id.as_deref(),
+            Self::EnsureIdentity { request_id, .. } | Self::LeaveTable { request_id } => {
+                request_id.as_deref()
+            }
             _ => None,
         }
     }
@@ -138,7 +142,7 @@ impl SidecarCommand {
             Self::SyncStatistics => "sync_statistics",
             Self::FetchArchivedReceipt { .. } => "fetch_archived_receipt",
             Self::SubmitAction { .. } => "submit_action",
-            Self::LeaveTable => "leave_table",
+            Self::LeaveTable { .. } => "leave_table",
             Self::Shutdown => "shutdown",
         }
     }
@@ -180,6 +184,15 @@ mod tests {
         assert_eq!(
             correlated_identity.request_id(),
             Some("7c98e82f-55fd-45e4-9a62-bd26dcdebb18")
+        );
+
+        let correlated_leave = decode_command_line(
+            r#"{"type":"leave_table","request_id":"4e4b4d25-e75f-4b1c-a7e8-89e953fd14ab"}"#,
+        )
+        .expect("带请求 ID 的离桌命令必须能被解码");
+        assert_eq!(
+            correlated_leave.request_id(),
+            Some("4e4b4d25-e75f-4b1c-a7e8-89e953fd14ab")
         );
 
         assert!(matches!(

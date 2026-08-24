@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use thiserror::Error;
 
-pub const RUNTIME_PROTOCOL_VERSION: u16 = 5;
+pub const RUNTIME_PROTOCOL_VERSION: u16 = 6;
 const EVENT_LIMIT: usize = 4_096;
 const EVENT_BYTES_LIMIT: usize = 8 * 1_024 * 1_024;
 const WORKER_ARGUMENT_LIMIT: usize = 64;
@@ -141,7 +141,7 @@ impl SessionEventProjection {
             "membership_confirmation" => self.insert("membership", event),
             "hand_roster_confirmation" => self.insert("roster", event),
             "next_hand_ready" => self.insert("next_hand", event),
-            "safe_leave_requested" => self.insert("safe_leave", event),
+            "safe_leave_requested" | "safe_leave_forced" => self.insert("safe_leave", event),
             "safe_leave_completed" => {
                 self.clear_pool();
                 self.clear_room();
@@ -165,7 +165,7 @@ impl SessionEventProjection {
             "hand_session_interrupted" | "hand_session_resumed" => {
                 self.insert("interruption", event);
             }
-            "hand_left" => self.clear_hand(),
+            "hand_left" | "hand_aborted_for_leave" => self.clear_hand(),
             _ => {}
         }
     }
@@ -334,12 +334,20 @@ impl EventJournal {
             | "room_entered"
             | "room_snapshot" => self.room_active = true,
             "pool_cancelled" => self.pool_active = false,
-            "room_closed" => self.room_active = false,
+            "safe_leave_completed" => {
+                self.pool_active = false;
+                self.room_active = false;
+                self.hand_active = false;
+            }
+            "room_closed" => {
+                self.room_active = false;
+                self.hand_active = false;
+            }
             "hand_protocol_started" | "hand_ready" | "hand_state" => {
                 self.hand_active = true;
                 self.room_active = true;
             }
-            "hand_left" => {
+            "hand_left" | "hand_aborted_for_leave" => {
                 self.hand_active = false;
             }
             _ => {}
@@ -446,7 +454,7 @@ mod tests {
     #[test]
     fn 运行时协议要求先握手并拒绝共享内核退出命令() {
         assert!(matches!(
-            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":5}"#),
+            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":6}"#),
             Ok(RuntimeClientRequest::Attach)
         ));
         assert!(matches!(
@@ -573,6 +581,35 @@ mod tests {
             .append(serde_json::json!({"type": "safe_leave_completed"}))
             .expect("安全离桌事件应写入");
         assert!(journal.session_projection.slots.is_empty());
+        assert!(!journal.is_busy());
+    }
+
+    #[test]
+    fn 签名离桌作废手牌后保留房间并解除手牌忙碌状态() {
+        let mut journal = EventJournal::new("runtime-abandoned-hand".to_owned());
+        journal
+            .append(serde_json::json!({"type": "room_entered", "table_id": "table-a"}))
+            .expect("入桌事件应写入");
+        journal
+            .append(serde_json::json!({"type": "room_snapshot", "table_id": "table-a"}))
+            .expect("房间快照应写入");
+        journal
+            .append(serde_json::json!({"type": "hand_protocol_started", "hand_number": 4}))
+            .expect("手牌启动事件应写入");
+        journal
+            .append(serde_json::json!({"type": "hand_aborted_for_leave", "hand_number": 4}))
+            .expect("手牌作废事件应写入");
+
+        assert!(journal.is_busy());
+        let projected = journal
+            .session_projection
+            .slots
+            .values()
+            .filter_map(|event| event.event.get("type").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert!(projected.contains(&"room_entered"));
+        assert!(projected.contains(&"room_snapshot"));
+        assert!(!projected.contains(&"hand_protocol_started"));
     }
 
     #[test]

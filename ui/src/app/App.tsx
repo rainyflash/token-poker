@@ -43,6 +43,7 @@ export function App() {
         <TableView
           bridge={bridge}
           sendCommand={sendCommand}
+          sendConfirmedCommand={sendConfirmedCommand}
           onOpenStatistics={() => openSubview("statistics")}
         />
       );
@@ -51,7 +52,14 @@ export function App() {
       primaryContent = <LobbyView bridge={bridge} sendCommand={sendCommand} />;
       break;
     case "matching":
-      primaryContent = <MatchmakingView bridge={bridge} sendCommand={sendCommand} />;
+      primaryContent = (
+        <MatchmakingView
+          key={bridge.room.tableId ?? "public-pool"}
+          bridge={bridge}
+          sendCommand={sendCommand}
+          sendConfirmedCommand={sendConfirmedCommand}
+        />
+      );
       break;
   }
 

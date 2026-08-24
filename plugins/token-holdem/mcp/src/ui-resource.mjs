@@ -114,6 +114,10 @@ export function buildHostBridge(version) {
   let resumeScheduled = false;
   let commandQueue = Promise.resolve();
   let updateQueue = Promise.resolve();
+  const confirmationErrors = new Map([
+    ["ensure_identity", "Plugin did not confirm the identity command"],
+    ["leave_table", "Plugin did not confirm the leave-table command"],
+  ]);
   const sessionController = new AbortController();
   const app = new apps.App(
     { name: "token-holdem", version: ${JSON.stringify(version)} },
@@ -458,8 +462,9 @@ export function buildHostBridge(version) {
           : resultError(result),
       };
     }
-    if (command?.type === "ensure_identity" && outcome.status !== "confirmed") {
-      throw new Error("Plugin did not confirm the identity command");
+    const confirmationError = confirmationErrors.get(command?.type);
+    if (confirmationError && outcome.status !== "confirmed") {
+      throw new Error(confirmationError);
     }
     if (outcome.status !== "accepted" && outcome.status !== "confirmed") {
       throw new Error("Plugin returned an invalid command status");

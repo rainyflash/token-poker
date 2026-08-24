@@ -87,7 +87,7 @@ pub fn build_protocol_vectors() -> ProtocolVectorFile {
     let receipt = co_signed_receipt(&first, &second);
 
     ProtocolVectorFile {
-        protocol_version: 9,
+        protocol_version: 10,
         format: "CBOR wire bytes + canonical signing bytes + BLAKE3 digest".to_owned(),
         vectors: vec![
             vector(

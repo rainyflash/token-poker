@@ -2,6 +2,28 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.11] - 2026-08-24
+
+### Fixed
+
+- Require a request-correlated game-core acknowledgement before the UI treats a leave-table command as accepted, while restoring the action on an explicit failure.
+- Keep leave controls locked only for the current room so rejoining a table cannot inherit stale pending state.
+- Wait for the signed membership certificate to remove a departing player before closing the local room, avoiding stale seats for the remaining players.
+- Deliver signed leave intents through the reliable consensus path in addition to bounded Gossipsub retries.
+- Make the forward-update release gate generate canonical ZIP paths on both Windows PowerShell 5.1 and PowerShell 7, while preserving updater diagnostics on failure.
+
+### Changed
+
+- A connected player leaves after the current hand and membership convergence instead of disappearing from local UI state immediately.
+- A player who signs a leave intent and then disconnects for ten seconds deterministically aborts the unfinished hand. The aborted hand creates no settlement receipt and does not affect persistent statistics; remaining players reform the room for the next hand.
+- Add bounded local cleanup for a stalled hand, stalled membership convergence, and an absolute safe-leave deadline.
+- Advance the public network protocol to version 10, gameplay topic namespaces to version 2, and the shared-runtime protocol to version 6 so incompatible clients cannot silently mix.
+
+### Added
+
+- Added protocol-10 fixed vectors and a two-peer integration test covering normal boundary leave, disconnect abandonment, survivor convergence, and the absence of an incomplete-hand receipt.
+- Added UI and MCP regression coverage for correlated leave confirmation, retry behavior, remount cleanup, and aborted-hand projection.
+
 ## [0.4.10] - 2026-08-24
 
 ### Fixed
@@ -169,6 +191,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.11]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.11
 [0.4.10]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.10
 [0.4.9]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.9
 [0.4.8]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.8

@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import type {
   BridgeSnapshot,
   CommandResult,
+  ConfirmedHostCommandSender,
   HostCommand,
   LocalRoomRole,
   PublicPoolStatus,
@@ -14,11 +15,13 @@ import { projectPlayerProfile } from "../account/model/player-profile";
 import { Button } from "../../shared/ui/button";
 import { CodexMark } from "../../shared/ui/codex-mark";
 import { StatusPill } from "../../shared/ui/status-pill";
+import { useSafeLeave } from "../session/model/use-safe-leave";
 import { STAKE_LEVELS } from "./model/stake-levels";
 
 interface MatchmakingViewProps {
   readonly bridge: BridgeSnapshot;
   readonly sendCommand: (command: HostCommand) => CommandResult;
+  readonly sendConfirmedCommand: ConfirmedHostCommandSender;
 }
 
 interface StatusCopy {
@@ -204,14 +207,20 @@ function RoomSurface({ bridge }: { readonly bridge: BridgeSnapshot }) {
   );
 }
 
-export function MatchmakingView({ bridge, sendCommand }: MatchmakingViewProps) {
+export function MatchmakingView({ bridge, sendCommand, sendConfirmedCommand }: MatchmakingViewProps) {
   const { t } = useI18n();
+  const safeLeave = useSafeLeave(sendConfirmedCommand, t("bridge.commandFailed"));
   const hasRoom = bridge.room.tableId !== null;
   const isFriendRoom = bridge.friendRoomStatus !== "idle";
-  const isLeaving = bridge.room.localRole === "leaving";
+  const shouldLeaveTable = hasRoom || isFriendRoom;
+  const isLeaving = safeLeave.isPending || bridge.room.localRole === "leaving";
   const leave = (): void => {
     if (isLeaving) return;
-    sendCommand({ type: hasRoom || isFriendRoom ? "leave_table" : "cancel_public_pool" });
+    if (shouldLeaveTable) {
+      void safeLeave.request();
+      return;
+    }
+    sendCommand({ type: "cancel_public_pool" });
   };
 
   return (
@@ -227,8 +236,8 @@ export function MatchmakingView({ bridge, sendCommand }: MatchmakingViewProps) {
             />
           </div>
           <Button variant="secondary" size="sm" disabled={isLeaving} onClick={leave}>
-            {hasRoom ? <LogOut className="size-3.5" /> : <X className="size-3.5" />}
-            {t(isLeaving ? "table.leavingShort" : hasRoom ? "match.safeLeave" : "match.stopSearch")}
+            {shouldLeaveTable ? <LogOut className="size-3.5" /> : <X className="size-3.5" />}
+            {t(isLeaving ? "table.leavingShort" : shouldLeaveTable ? "match.safeLeave" : "match.stopSearch")}
           </Button>
         </div>
 
@@ -237,6 +246,12 @@ export function MatchmakingView({ bridge, sendCommand }: MatchmakingViewProps) {
             <p className="text-[8px] font-medium uppercase tracking-[.12em] text-[var(--muted-light)]">{t("match.inviteCode")}</p>
             <p className="mt-0.5 font-mono text-[11px] font-semibold tracking-[.06em]">{bridge.friendInviteCode}</p>
           </div>
+        ) : null}
+
+        {safeLeave.state.status === "failed" ? (
+          <p className="absolute left-1/2 top-[clamp(66px,10vh,96px)] -translate-x-1/2 text-[10px] text-[var(--codex-red-600)]" role="alert">
+            {safeLeave.state.error}
+          </p>
         ) : null}
 
         {hasRoom ? <RoomSurface bridge={bridge} /> : <SearchSurface bridge={bridge} />}

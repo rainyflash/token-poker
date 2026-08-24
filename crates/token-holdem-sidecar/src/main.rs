@@ -101,6 +101,10 @@ enum SidecarEvent {
         command_type: &'static str,
         message: String,
     },
+    CommandConfirmed {
+        request_id: String,
+        command_type: &'static str,
+    },
     ListenAddress {
         address: String,
     },
@@ -302,17 +306,27 @@ async fn main() -> Result<()> {
                             Ok(command) => {
                                 let request_id = command.request_id().map(str::to_owned);
                                 let command_type = command.command_type();
-                                if let Err(error) = handle_command(&mut swarm, &mut state, command) {
-                                    if let Some(request_id) = request_id {
-                                        emit(&SidecarEvent::CommandFailed {
-                                            request_id,
-                                            command_type,
-                                            message: format!("{error:#}"),
+                                match handle_command(&mut swarm, &mut state, command) {
+                                    Ok(()) => {
+                                        if let Some(request_id) = request_id {
+                                            emit(&SidecarEvent::CommandConfirmed {
+                                                request_id,
+                                                command_type,
+                                            })?;
+                                        }
+                                    }
+                                    Err(error) => {
+                                        if let Some(request_id) = request_id {
+                                            emit(&SidecarEvent::CommandFailed {
+                                                request_id,
+                                                command_type,
+                                                message: format!("{error:#}"),
+                                            })?;
+                                        }
+                                        emit(&SidecarEvent::Warning {
+                                            message: format!("控制命令执行失败：{error:#}"),
                                         })?;
                                     }
-                                    emit(&SidecarEvent::Warning {
-                                        message: format!("控制命令执行失败：{error:#}"),
-                                    })?;
                                 }
                             }
                             Err(error) => emit(&SidecarEvent::Warning {
@@ -509,7 +523,7 @@ fn handle_command(
         SidecarCommand::SubmitAction { action, amount } => {
             submit_hand_action(swarm, state, &action, amount)?
         }
-        SidecarCommand::LeaveTable => leave_table(swarm, state)?,
+        SidecarCommand::LeaveTable { .. } => leave_table(swarm, state)?,
         SidecarCommand::Shutdown => unreachable!("退出命令已在事件循环中处理"),
     }
     Ok(())
@@ -763,7 +777,11 @@ fn protocol_tick(
             hand_now_unix_ms,
         )?
     };
-    process_hand_events(swarm, state, hand_events)
+    process_hand_events(swarm, state, hand_events)?;
+    let forced_leave_events = state
+        .session
+        .force_local_leave_if_due(state.hand.safe_leave_is_stalled(), Instant::now())?;
+    process_table_session_events(swarm, state, forced_leave_events)
 }
 
 fn create_friend_room(
@@ -1674,6 +1692,16 @@ fn process_table_session_events(
     events: impl IntoIterator<Item = TableSessionEvent>,
 ) -> Result<()> {
     for event in events {
+        if let TableSessionEvent::HandAbortedForLeave {
+            table_id,
+            hand_number,
+            ..
+        } = &event
+        {
+            state
+                .hand
+                .abort_for_signed_leave(swarm, table_id, *hand_number)?;
+        }
         emit(&event)?;
     }
     if state.session.local_admission_acknowledged()
@@ -1689,6 +1717,10 @@ fn process_table_session_events(
             }
         }
     }
+    if state.session.take_leave_completed() {
+        complete_local_leave(swarm, state)?;
+        return Ok(());
+    }
     if let Some(table) = state.session.take_ready_table() {
         let identity = state
             .identity
@@ -1702,9 +1734,6 @@ fn process_table_session_events(
             unix_time_ms()?,
         )?;
         process_hand_events(swarm, state, events)?;
-    }
-    if state.session.take_leave_completed() {
-        complete_local_leave(swarm, state)?;
     }
     Ok(())
 }
@@ -1740,12 +1769,14 @@ fn leave_table(
     if state.session.is_active() {
         let identity = state.identity.as_ref().context("安全离桌时玩家身份缺失")?;
         let events = state.session.request_leave(
+            swarm,
             &identity.device,
             identity.certificate.clone(),
             unix_time_ms()?,
+            Instant::now(),
         )?;
         if state.hand.is_active() {
-            state.hand.request_safe_leave()?;
+            state.hand.request_safe_leave();
         }
         return process_table_session_events(swarm, state, events);
     }

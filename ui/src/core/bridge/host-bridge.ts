@@ -162,6 +162,7 @@ const EMPTY_ROOM: RoomSnapshot = Object.freeze({
   rosterConfirmed: 0,
   rosterRequired: 0,
   safeLeaveAfterHand: null,
+  safeLeaveForceAfterUnixMs: null,
 });
 
 const INITIAL_VOLUNTEER: VolunteerSnapshot = Object.freeze(
@@ -679,7 +680,14 @@ class HostBridgeStore {
             ...this.#snapshot.room,
             localRole: "leaving",
             safeLeaveAfterHand: event.after_hand_number,
+            safeLeaveForceAfterUnixMs: event.force_after_unix_ms,
           },
+        });
+        break;
+      case "safe_leave_forced":
+        this.#replace({
+          ...this.#snapshot,
+          lastWarning: bridgeText("bridge.safeLeaveForced"),
         });
         break;
       case "safe_leave_completed":
@@ -875,6 +883,15 @@ class HostBridgeStore {
       case "hand_left":
         this.#replace({ ...this.#snapshot, hand: EMPTY_HAND });
         break;
+      case "hand_aborted_for_leave":
+        this.#replace({
+          ...this.#snapshot,
+          hand: EMPTY_HAND,
+          lastWarning: bridgeText("bridge.handAbortedForLeave", {
+            player: event.player_id.slice(0, 12),
+          }),
+        });
+        break;
       case "friend_room_created":
         this.#replace({
           ...this.#snapshot,
@@ -1055,7 +1072,7 @@ class HostBridgeStore {
         this.#previewPoolRun += 1;
         this.#schedulePreviewPool(this.#previewPoolRun, 360, {
           type: "pool_joined",
-          topic: `/token-holdem/table-pool/1/${command.level_id}`,
+          topic: `/token-holdem/table-pool/2/${command.level_id}`,
           level_id: command.level_id,
           buy_in: command.buy_in,
         });

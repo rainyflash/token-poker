@@ -101,13 +101,37 @@ Write-Output "Synthetic Token Poker $ExpectedVersion installer completed."
         $utf8NoBom
     )
 
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $sourceParent,
+    $archive = [System.IO.Compression.ZipFile]::Open(
         $archivePath,
-        [System.IO.Compression.CompressionLevel]::Optimal,
-        $false
+        [System.IO.Compression.ZipArchiveMode]::Create
     )
+    try {
+        $packagePrefix = $packageRoot.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        ) + [System.IO.Path]::DirectorySeparatorChar
+        foreach ($file in Get-ChildItem -LiteralPath $packageRoot -Recurse -File) {
+            $relativePath = $file.FullName.Substring($packagePrefix.Length).Replace('\', '/')
+            $entry = $archive.CreateEntry(
+                "$packageName/$relativePath",
+                [System.IO.Compression.CompressionLevel]::Optimal
+            )
+            $sourceStream = $file.OpenRead()
+            $destinationStream = $entry.Open()
+            try {
+                $sourceStream.CopyTo($destinationStream)
+            }
+            finally {
+                $destinationStream.Dispose()
+                $sourceStream.Dispose()
+            }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
     $archiveFile = Get-Item -LiteralPath $archivePath
     $archiveDigest = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $env:TOKEN_POKER_FORWARD_UPDATE_MARKER = $markerPath
@@ -121,7 +145,22 @@ Write-Output "Synthetic Token Poker $ExpectedVersion installer completed."
         -ParentProcessId $PID `
         -DelaySeconds 0
 
-    Assert-True -Condition (Test-Path -LiteralPath $markerPath -PathType Leaf) -Message 'The next-version installer did not run.'
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        $resultDetail = if (Test-Path -LiteralPath $resultPath -PathType Leaf) {
+            Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8
+        }
+        else {
+            'missing update-result.json'
+        }
+        $logPath = Join-Path $testRoot 'install.log'
+        $logDetail = if (Test-Path -LiteralPath $logPath -PathType Leaf) {
+            Get-Content -LiteralPath $logPath -Raw -Encoding UTF8
+        }
+        else {
+            'missing install.log'
+        }
+        throw "The next-version installer did not run. Result: $resultDetail Log: $logDetail"
+    }
     Assert-True -Condition (Test-Path -LiteralPath $resultPath -PathType Leaf) -Message 'The update helper did not write its result.'
     $marker = Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $result = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json

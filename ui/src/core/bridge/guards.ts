@@ -546,16 +546,44 @@ export function parseSidecarEvent(value: unknown): SidecarEvent | null {
           }
         : null;
     case "safe_leave_requested":
-      return isString(value.table_id) && isNullablePositiveSafeInteger(value.after_hand_number)
+      return isString(value.table_id) &&
+        isNullablePositiveSafeInteger(value.after_hand_number) &&
+        isPositiveSafeInteger(value.force_after_unix_ms)
         ? {
             type: value.type,
             table_id: value.table_id,
             after_hand_number: value.after_hand_number,
+            force_after_unix_ms: value.force_after_unix_ms,
+          }
+        : null;
+    case "safe_leave_forced":
+      return isString(value.table_id) &&
+        isStringMember(value.reason, ["hand_stalled", "membership_timeout", "absolute_timeout"] as const) &&
+        isNonNegativeSafeInteger(value.waited_ms)
+        ? {
+            type: value.type,
+            table_id: value.table_id,
+            reason: value.reason,
+            waited_ms: value.waited_ms,
           }
         : null;
     case "safe_leave_completed":
     case "room_closed":
       return isString(value.table_id) ? { type: value.type, table_id: value.table_id } : null;
+    case "hand_aborted_for_leave":
+      return isString(value.table_id) &&
+        isPositiveSafeInteger(value.hand_number) &&
+        isString(value.player_id) &&
+        isString(value.evidence_hash) &&
+        /^[0-9a-f]{64}$/u.test(value.evidence_hash)
+        ? {
+            type: value.type,
+            table_id: value.table_id,
+            hand_number: value.hand_number,
+            player_id: value.player_id,
+            evidence_hash: value.evidence_hash,
+          }
+        : null;
     case "hand_protocol_started":
       return isString(value.table_id) &&
         isPositiveSafeInteger(value.hand_number) &&

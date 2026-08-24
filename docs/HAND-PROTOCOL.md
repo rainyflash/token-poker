@@ -30,6 +30,16 @@ Each action binds the table ID, hand number, expected sequence, public pre-state
 
 No host relay is required for an opponent's action. A hand stops only when the current actor disappears, a required share is withheld, or valid equivocation is observed.
 
+## Safe leave and abandonment
+
+A leave request is not a local navigation shortcut. The device signs a `LeaveIntent` bound to the table, membership version, and current hand. The sidecar distributes that intent through direct consensus delivery and bounded Gossipsub retries before acknowledging the command to the UI.
+
+If the departing player remains connected, the current hand completes normally. The room closes locally only after a fully accepted membership certificate excludes that player. This prevents one client from disappearing while survivors retain a stale occupied seat.
+
+If a player signs the intent and then remains explicitly disconnected for ten seconds during an active hand, every survivor derives the same abandonment evidence from the table ID, hand number, roster hash, and leave-intent ID. The hand is aborted without a settlement receipt or statistics update. The evidence becomes the previous-hand barrier input, membership removes the departed player, and the remaining seats may start the next hand.
+
+Local cleanup is bounded: a stalled hand may close after ten seconds, membership convergence after fifteen seconds, and every safe-leave attempt after an absolute two-minute deadline. These deadlines only release local resources; they do not fabricate a settlement or a peer signature.
+
 ## Settlement and the next hand
 
 Every peer deterministically constructs the same `HandReceipt` from the table ID, hand number, stake, combined transcript digest, settlement time, and zero-sum result. A device signs only the exact receipt that includes its own player ID, public key, and valid certificate.
@@ -56,7 +66,7 @@ The test drives one Rendezvous service and two players through discovery, matchm
 
 ## Known limitations
 
-- A disconnected actor pauses the hand. Local clocks are not sufficient evidence for an automatic fold.
+- An unsigned disconnect still pauses the hand. Local clocks are not sufficient evidence for an automatic fold or settlement; deterministic abandonment requires a previously verified leave intent.
 - Valid equivocation freezes the hand; automatic arbitration and penalties are not implemented.
 - Connections may recover, but an unsettled hand does not survive a complete sidecar process crash.
 - The underlying `ziffle` library has not received a production third-party audit.

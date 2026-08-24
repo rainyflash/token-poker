@@ -418,6 +418,25 @@ impl HandRuntime {
         Some(HandEvent::HandLeft)
     }
 
+    pub(crate) fn abort_for_signed_leave(
+        &mut self,
+        swarm: &mut libp2p::Swarm<NetworkBehaviour>,
+        table_id: &str,
+        hand_number: u64,
+    ) -> Result<()> {
+        let active = self.active.as_ref().context("待作废的手牌运行时不存在")?;
+        anyhow::ensure!(
+            active.table_id_string() == table_id && active.hand_number == hand_number,
+            "签名离桌证据与当前手牌范围不一致"
+        );
+        let active = self.active.take().context("待作废的手牌运行时丢失")?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .unsubscribe(&gossipsub::IdentTopic::new(active.topic));
+        Ok(())
+    }
+
     pub(crate) fn handle_public(
         &mut self,
         swarm: &mut libp2p::Swarm<NetworkBehaviour>,
@@ -553,10 +572,18 @@ impl HandRuntime {
         self.active.is_some()
     }
 
-    pub(crate) fn request_safe_leave(&mut self) -> Result<()> {
-        let active = self.active.as_mut().context("当前没有进行中的手牌")?;
-        active.safe_leave_requested = true;
-        Ok(())
+    pub(crate) fn request_safe_leave(&mut self) {
+        debug_assert!(self.active.is_some(), "请求安全离桌时必须有进行中的手牌");
+        if let Some(active) = self.active.as_mut() {
+            active.safe_leave_requested = true;
+        }
+    }
+
+    pub(crate) fn safe_leave_is_stalled(&self) -> bool {
+        self.active.as_ref().is_some_and(|active| {
+            active.safe_leave_requested
+                && (!active.disconnected_peers.is_empty() || active.action_conflict.is_some())
+        })
     }
 
     pub(crate) fn handle_direct_response(

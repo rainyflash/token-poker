@@ -51,7 +51,7 @@ npm test
 Pop-Location
 ```
 
-4. If canonical encoding, signature domains, protocol versions, or signed structures change, explicitly regenerate `test-vectors/protocol-8/core.json`, explain the diff, and prove that incompatible old vectors fail as expected.
+4. If canonical encoding, signature domains, protocol versions, or signed structures change, explicitly regenerate `test-vectors/protocol-<version>/core.json`, explain the diff, and prove that incompatible old vectors fail as expected.
 5. A pull request description must state the behavioral change, boundary cases, verification evidence, and remaining risks.
 
 ## Release discipline

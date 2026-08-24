@@ -419,6 +419,8 @@ const EN_MESSAGES = {
   "bridge.volunteerDeferred": "The new volunteer setting applies after the active match or hand ends.",
   "bridge.actionConflict": "Action #{sequence} has conflicting signatures: {accepted}… / {conflicting}…",
   "bridge.participantDisconnected": "Participant {peer}… disconnected. The table is paused.",
+  "bridge.safeLeaveForced": "Safe leave reached its bounded fallback. The local session closed; any incomplete hand was not recorded.",
+  "bridge.handAbortedForLeave": "Player {player}… left after signing a leave intent. The incomplete hand was discarded and the remaining table is reforming.",
 } as const;
 
 export type MessageKey = keyof typeof EN_MESSAGES;
@@ -843,6 +845,8 @@ const ZH_CN_MESSAGES: Readonly<Record<MessageKey, string>> = {
   "bridge.volunteerDeferred": "当前牌局或匹配结束后，新志愿设置会在下次启动时生效。",
   "bridge.actionConflict": "动作 #{sequence} 出现签名冲突：{accepted}… / {conflicting}…",
   "bridge.participantDisconnected": "参与者 {peer}… 已断线，牌桌暂停",
+  "bridge.safeLeaveForced": "安全离桌已触发有界兜底；本机会话已关闭，未完成的手牌不会记录输赢。",
+  "bridge.handAbortedForLeave": "玩家 {player}… 在签署离桌意图后断线；未完成的手牌已作废，剩余玩家正在重组牌桌。",
 };
 
 const CATALOGS: Readonly<Record<Language, Readonly<Record<MessageKey, string>>>> = {

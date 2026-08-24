@@ -20,7 +20,7 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
   process.env.LOCALAPPDATA = isolatedLocalAppData;
   process.env.TOKEN_HOLDEM_RUNTIME_PATH = join(pluginRoot, "bin", "token-holdem-runtime.exe");
   process.env.TOKEN_HOLDEM_SIDECAR_PATH = join(pluginRoot, "bin", "token-holdem-sidecar.exe");
-  process.env.TOKEN_HOLDEM_RUNTIME_PIPE = String.raw`\\.\pipe\token-holdem-runtime-v5-${randomBytes(12).toString("hex")}`;
+  process.env.TOKEN_HOLDEM_RUNTIME_PIPE = String.raw`\\.\pipe\token-holdem-runtime-v6-${randomBytes(12).toString("hex")}`;
   process.env.TOKEN_HOLDEM_RUNTIME_IDLE_TIMEOUT_SECONDS = "30";
 
   let first = null;
@@ -50,6 +50,10 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
       randomUUID(),
     );
     assert.equal(first.currentState.identity?.player_id, identity.player_id);
+    await assert.rejects(
+      first.leaveTable({ type: "leave_table" }, randomUUID()),
+      /当前既没有公开匹配，也没有可离开的牌桌/u,
+    );
     await first.close();
     first = null;
 

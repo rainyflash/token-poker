@@ -92,6 +92,7 @@ export interface RoomSnapshot {
   readonly rosterConfirmed: number;
   readonly rosterRequired: number;
   readonly safeLeaveAfterHand: number | null;
+  readonly safeLeaveForceAfterUnixMs: number | null;
 }
 
 export type HandProtocolPhase =
@@ -410,8 +411,22 @@ export type SidecarEvent =
       readonly type: "safe_leave_requested";
       readonly table_id: string;
       readonly after_hand_number: number | null;
+      readonly force_after_unix_ms: number;
+    }
+  | {
+      readonly type: "safe_leave_forced";
+      readonly table_id: string;
+      readonly reason: "hand_stalled" | "membership_timeout" | "absolute_timeout";
+      readonly waited_ms: number;
     }
   | { readonly type: "safe_leave_completed"; readonly table_id: string }
+  | {
+      readonly type: "hand_aborted_for_leave";
+      readonly table_id: string;
+      readonly hand_number: number;
+      readonly player_id: string;
+      readonly evidence_hash: string;
+    }
   | { readonly type: "room_closed"; readonly table_id: string }
   | {
       readonly type: "hand_protocol_started";
@@ -712,3 +727,5 @@ export interface BridgeSnapshot {
 export type CommandResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly error: string };
+
+export type ConfirmedHostCommandSender = (command: HostCommand) => Promise<CommandResult>;

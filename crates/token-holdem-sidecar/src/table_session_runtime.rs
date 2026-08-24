@@ -34,9 +34,14 @@ const MEMBERSHIP_CERTIFICATE_REPUBLISH_INTERVAL: Duration = Duration::from_secs(
 const CONSENSUS_GOSSIP_REPUBLISH_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_CONSENSUS_GOSSIP_ATTEMPTS: u8 = 6;
 const NON_OWNER_DIAL_FALLBACK_DELAY: Duration = Duration::from_secs(2);
+const SIGNED_LEAVER_DISCONNECT_GRACE: Duration = Duration::from_secs(10);
+const STALLED_SAFE_LEAVE_TIMEOUT: Duration = Duration::from_secs(10);
+const IDLE_SAFE_LEAVE_TIMEOUT: Duration = Duration::from_secs(15);
+const ABSOLUTE_SAFE_LEAVE_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_MESSAGE_BYTES: usize = 256 * 1_024;
 const ROOM_WIRE_ENVELOPE_VERSION: u8 = 2;
 const MAX_GOSSIPED_CONSENSUS_MESSAGES: usize = 256;
+const ABANDONED_HAND_DOMAIN: &[u8] = b"token-holdem/abandoned-hand/v1\0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -91,9 +96,21 @@ pub(crate) enum TableSessionEvent {
     SafeLeaveRequested {
         table_id: String,
         after_hand_number: Option<u64>,
+        force_after_unix_ms: u64,
+    },
+    SafeLeaveForced {
+        table_id: String,
+        reason: &'static str,
+        waited_ms: u64,
     },
     SafeLeaveCompleted {
         table_id: String,
+    },
+    HandAbortedForLeave {
+        table_id: String,
+        hand_number: u64,
+        player_id: String,
+        evidence_hash: String,
     },
     RoomClosed {
         table_id: String,
@@ -240,7 +257,33 @@ struct ActiveSession {
     previous_dealer_seat: Option<PhysicalSeat>,
     ready_table: Option<ReadyTable>,
     local_leave: Option<LeaveIntent>,
+    local_leave_started_at: Option<Instant>,
+    local_leave_membership_started_at: Option<Instant>,
     leave_completed: bool,
+}
+
+struct SignedLeaveAbandonment {
+    player_id: PlayerId,
+    hand_number: u64,
+    dealer_seat: PhysicalSeat,
+    evidence_hash: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForcedLeaveReason {
+    HandStalled,
+    MembershipTimeout,
+    AbsoluteTimeout,
+}
+
+impl ForcedLeaveReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::HandStalled => "hand_stalled",
+            Self::MembershipTimeout => "membership_timeout",
+            Self::AbsoluteTimeout => "absolute_timeout",
+        }
+    }
 }
 
 #[derive(Default)]
@@ -395,9 +438,13 @@ impl TableSessionRuntime {
     }
 
     pub(crate) fn take_ready_table(&mut self) -> Option<ReadyTable> {
-        self.active
-            .as_mut()
-            .and_then(|active| active.ready_table.take())
+        self.active.as_mut().and_then(|active| {
+            active
+                .local_leave
+                .is_none()
+                .then(|| active.ready_table.take())
+                .flatten()
+        })
     }
 
     pub(crate) fn take_leave_completed(&mut self) -> bool {
@@ -549,6 +596,20 @@ impl TableSessionRuntime {
         active
             .leaves
             .retain(|_, intent| intent.verify_at(now_unix_ms).is_ok());
+
+        if let Some(abandonment) = signed_disconnected_leaver(active, now_monotonic)? {
+            events.push(TableSessionEvent::HandAbortedForLeave {
+                table_id: active.table_id.to_string(),
+                hand_number: abandonment.hand_number,
+                player_id: abandonment.player_id.to_string(),
+                evidence_hash: hex::encode(abandonment.evidence_hash),
+            });
+            events.extend(active.finish_hand_boundary(
+                abandonment.evidence_hash,
+                abandonment.dealer_seat,
+                now_monotonic,
+            )?);
+        }
 
         maybe_propose_membership(active, device, certificate, now_unix_ms)?;
         events.extend(finalize_membership_if_ready(
@@ -750,9 +811,11 @@ impl TableSessionRuntime {
 
     pub(crate) fn request_leave(
         &mut self,
+        swarm: &mut libp2p::Swarm<NetworkBehaviour>,
         device: &DeviceIdentity,
         certificate: DeviceCertificate,
         now_unix_ms: u64,
+        now_monotonic: Instant,
     ) -> Result<Vec<TableSessionEvent>> {
         let active = self.active.as_mut().context("尚未进入牌桌房间")?;
         if active.local_leave.is_some() {
@@ -768,6 +831,12 @@ impl TableSessionRuntime {
         let expires_at = now_unix_ms
             .checked_add(JOIN_INTENT_LIFETIME_MS)
             .context("离桌意图有效期溢出")?;
+        let force_after_unix_ms = now_unix_ms
+            .checked_add(
+                u64::try_from(ABSOLUTE_SAFE_LEAVE_TIMEOUT.as_millis())
+                    .context("离桌等待上限超出毫秒范围")?,
+            )
+            .context("离桌等待截止时间溢出")?;
         let intent = LeaveIntent::issue(
             active.table_id,
             after_hand_number,
@@ -779,7 +848,26 @@ impl TableSessionRuntime {
             certificate,
         )?;
         active.leaves.insert(intent.player_id(), intent.clone());
-        active.local_leave = Some(intent);
+        active.local_leave = Some(intent.clone());
+        active.local_leave_started_at = Some(now_monotonic);
+        active.local_leave_membership_started_at = (!active.hand_active).then_some(now_monotonic);
+        active.ready_table = None;
+        let leave_message =
+            RoomWireMessage::Session(TableSessionMessage::LeaveIntent(Box::new(intent)));
+        let leave_recipients = active
+            .membership
+            .as_ref()
+            .map(|membership| membership_recipients(membership.proposal()))
+            .transpose()?
+            .unwrap_or_default();
+        deliver_consensus_message(
+            swarm,
+            active,
+            &leave_message,
+            leave_recipients,
+            now_monotonic,
+        )?;
+        active.last_session_messages_published_at = Some(now_monotonic);
         if !active.hand_active {
             active.pending_membership = None;
             active.membership_acceptances.clear();
@@ -792,8 +880,9 @@ impl TableSessionRuntime {
             TableSessionEvent::SafeLeaveRequested {
                 table_id: active.table_id.to_string(),
                 after_hand_number,
+                force_after_unix_ms,
             },
-            active.snapshot(Instant::now())?,
+            active.snapshot(now_monotonic)?,
         ];
         if active.leave_completed {
             events.push(TableSessionEvent::SafeLeaveCompleted {
@@ -803,40 +892,57 @@ impl TableSessionRuntime {
         Ok(events)
     }
 
+    pub(crate) fn force_local_leave_if_due(
+        &mut self,
+        hand_stalled: bool,
+        now_monotonic: Instant,
+    ) -> Result<Vec<TableSessionEvent>> {
+        let Some(active) = self.active.as_mut() else {
+            return Ok(Vec::new());
+        };
+        if active.local_leave.is_none() || active.leave_completed {
+            return Ok(Vec::new());
+        }
+        let Some(started_at) = active.local_leave_started_at else {
+            anyhow::bail!("本地离桌意图缺少等待起点")
+        };
+        let elapsed = now_monotonic.saturating_duration_since(started_at);
+        let membership_elapsed = active
+            .local_leave_membership_started_at
+            .map(|started| now_monotonic.saturating_duration_since(started));
+        let reason = forced_leave_reason(
+            active.hand_active,
+            hand_stalled,
+            elapsed,
+            membership_elapsed,
+        );
+        let Some(reason) = reason else {
+            return Ok(Vec::new());
+        };
+        active.leave_completed = true;
+        let waited_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+        Ok(vec![
+            TableSessionEvent::SafeLeaveForced {
+                table_id: active.table_id.to_string(),
+                reason: reason.as_str(),
+                waited_ms,
+            },
+            TableSessionEvent::SafeLeaveCompleted {
+                table_id: active.table_id.to_string(),
+            },
+        ])
+    }
+
     pub(crate) fn on_hand_boundary(
         &mut self,
         receipt_hash: [u8; 32],
         dealer_seat: PhysicalSeat,
         now_monotonic: Instant,
     ) -> Result<Vec<TableSessionEvent>> {
-        let active = self.active.as_mut().context("尚未进入牌桌房间")?;
-        anyhow::ensure!(active.hand_active, "当前没有可结束的手牌");
-        active.hand_active = false;
-        active.hand_clock_known = true;
-        active.previous_receipt_hash = Some(receipt_hash);
-        active.previous_dealer_seat = Some(dealer_seat);
-        active.next_hand_number = active
-            .next_hand_number
-            .checked_add(1)
-            .context("下一手编号溢出")?;
-        active.pending_roster = None;
-        active.active_roster = None;
-        active.roster_certificate = None;
-        active.last_roster_certificate_published_at = None;
-        active.roster_acceptances.clear();
-        active.local_roster_acceptance = None;
-        active.pending_membership = None;
-        active.membership_acceptances.clear();
-        active.local_membership_acceptance = None;
-        active.countdown_started_at = Some(now_monotonic);
-        let mut events = vec![active.snapshot(now_monotonic)?];
-        if active.local_leave.is_some() && active.local_is_only_seat() {
-            active.leave_completed = true;
-            events.push(TableSessionEvent::SafeLeaveCompleted {
-                table_id: active.table_id.to_string(),
-            });
-        }
-        Ok(events)
+        self.active
+            .as_mut()
+            .context("尚未进入牌桌房间")?
+            .finish_hand_boundary(receipt_hash, dealer_seat, now_monotonic)
     }
 }
 
@@ -875,6 +981,45 @@ impl ActiveSession {
                     seat.join_intent().player_id() == self.local_join.player_id()
                 })
         })
+    }
+
+    fn finish_hand_boundary(
+        &mut self,
+        evidence_hash: [u8; 32],
+        dealer_seat: PhysicalSeat,
+        now_monotonic: Instant,
+    ) -> Result<Vec<TableSessionEvent>> {
+        anyhow::ensure!(self.hand_active, "当前没有可结束的手牌");
+        self.hand_active = false;
+        self.hand_clock_known = true;
+        self.previous_receipt_hash = Some(evidence_hash);
+        self.previous_dealer_seat = Some(dealer_seat);
+        self.next_hand_number = self
+            .next_hand_number
+            .checked_add(1)
+            .context("下一手编号溢出")?;
+        self.pending_roster = None;
+        self.active_roster = None;
+        self.roster_certificate = None;
+        self.last_roster_certificate_published_at = None;
+        self.roster_acceptances.clear();
+        self.local_roster_acceptance = None;
+        self.pending_membership = None;
+        self.membership_acceptances.clear();
+        self.local_membership_acceptance = None;
+        self.countdown_started_at = Some(now_monotonic);
+        let mut events = vec![self.snapshot(now_monotonic)?];
+        if self.local_leave.is_some() {
+            if self.local_is_only_seat() {
+                self.leave_completed = true;
+                events.push(TableSessionEvent::SafeLeaveCompleted {
+                    table_id: self.table_id.to_string(),
+                });
+            } else {
+                self.local_leave_membership_started_at = Some(now_monotonic);
+            }
+        }
+        Ok(events)
     }
 
     fn new(
@@ -920,6 +1065,8 @@ impl ActiveSession {
             previous_dealer_seat: None,
             ready_table: None,
             local_leave: None,
+            local_leave_started_at: None,
+            local_leave_membership_started_at: None,
             leave_completed: false,
         }
     }
@@ -998,6 +1145,86 @@ impl ActiveSession {
             next_hand_countdown_ms,
         })
     }
+}
+
+fn signed_disconnected_leaver(
+    active: &ActiveSession,
+    now_monotonic: Instant,
+) -> Result<Option<SignedLeaveAbandonment>> {
+    if !active.hand_active {
+        return Ok(None);
+    }
+    let Some(membership) = active.membership.as_ref() else {
+        return Ok(None);
+    };
+    let Some(roster) = active.active_roster.as_ref() else {
+        return Ok(None);
+    };
+    let candidate = active
+        .leaves
+        .values()
+        .filter(|intent| intent.after_hand_number() == Some(active.next_hand_number))
+        .filter_map(|intent| {
+            let seat = membership.proposal().seat_by_player(intent.player_id())?;
+            let peer_id = PeerId::from_bytes(seat.join_intent().ticket().session_peer_id()).ok()?;
+            let disconnected_at = active.disconnected_explicit_peers.get(&peer_id)?;
+            (now_monotonic.saturating_duration_since(*disconnected_at)
+                >= SIGNED_LEAVER_DISCONNECT_GRACE)
+                .then_some(intent)
+        })
+        .min_by_key(|intent| intent.id());
+    let Some(intent) = candidate else {
+        return Ok(None);
+    };
+    let ready_roster = roster.proposal().ready_roster();
+    Ok(Some(SignedLeaveAbandonment {
+        player_id: intent.player_id(),
+        hand_number: active.next_hand_number,
+        dealer_seat: ready_roster.dealer_seat(),
+        evidence_hash: abandoned_hand_evidence_hash(
+            active.table_id.as_bytes(),
+            active.next_hand_number,
+            ready_roster.roster_hash(),
+            intent.id().as_bytes(),
+        ),
+    }))
+}
+
+fn forced_leave_reason(
+    hand_active: bool,
+    hand_stalled: bool,
+    total_elapsed: Duration,
+    membership_elapsed: Option<Duration>,
+) -> Option<ForcedLeaveReason> {
+    match (hand_active, hand_stalled) {
+        (true, true) if total_elapsed >= STALLED_SAFE_LEAVE_TIMEOUT => {
+            Some(ForcedLeaveReason::HandStalled)
+        }
+        (false, _)
+            if membership_elapsed.is_some_and(|elapsed| elapsed >= IDLE_SAFE_LEAVE_TIMEOUT) =>
+        {
+            Some(ForcedLeaveReason::MembershipTimeout)
+        }
+        _ if total_elapsed >= ABSOLUTE_SAFE_LEAVE_TIMEOUT => {
+            Some(ForcedLeaveReason::AbsoluteTimeout)
+        }
+        _ => None,
+    }
+}
+
+fn abandoned_hand_evidence_hash(
+    table_id: &[u8; 32],
+    hand_number: u64,
+    roster_hash: &[u8; 32],
+    leave_intent_id: &[u8; 32],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(ABANDONED_HAND_DOMAIN);
+    hasher.update(table_id);
+    hasher.update(&hand_number.to_be_bytes());
+    hasher.update(roster_hash);
+    hasher.update(leave_intent_id);
+    *hasher.finalize().as_bytes()
 }
 
 fn maybe_propose_membership(
@@ -1927,13 +2154,19 @@ fn publish_active_messages(
                 active.local_join.clone(),
             ))),
         )?;
-        if let Some(leave) = &active.local_leave {
-            publish(
+        if let Some(leave) = active.local_leave.clone() {
+            let leave_recipients = active
+                .membership
+                .as_ref()
+                .map(|membership| membership_recipients(membership.proposal()))
+                .transpose()?
+                .unwrap_or_default();
+            deliver_consensus_message(
                 swarm,
-                &active.topic,
-                &RoomWireMessage::Session(TableSessionMessage::LeaveIntent(Box::new(
-                    leave.clone(),
-                ))),
+                active,
+                &RoomWireMessage::Session(TableSessionMessage::LeaveIntent(Box::new(leave))),
+                leave_recipients,
+                now_monotonic,
             )?;
         }
         if let Some(proposal) = active.pending_membership.clone() {
@@ -2347,5 +2580,59 @@ mod tests {
         .expect("测试成员应有效");
         assert_eq!(membership.members().count(), 2);
         assert_eq!(membership.waiting().len(), 0);
+    }
+
+    #[test]
+    fn 安全离桌兜底按牌局状态选择有界超时() {
+        assert_eq!(
+            forced_leave_reason(true, true, STALLED_SAFE_LEAVE_TIMEOUT, None),
+            Some(ForcedLeaveReason::HandStalled)
+        );
+        assert_eq!(
+            forced_leave_reason(
+                false,
+                false,
+                ABSOLUTE_SAFE_LEAVE_TIMEOUT.saturating_sub(Duration::from_secs(1)),
+                Some(IDLE_SAFE_LEAVE_TIMEOUT),
+            ),
+            Some(ForcedLeaveReason::MembershipTimeout)
+        );
+        assert_eq!(
+            forced_leave_reason(true, false, ABSOLUTE_SAFE_LEAVE_TIMEOUT, None),
+            Some(ForcedLeaveReason::AbsoluteTimeout)
+        );
+        assert_eq!(
+            forced_leave_reason(
+                true,
+                true,
+                STALLED_SAFE_LEAVE_TIMEOUT.saturating_sub(Duration::from_millis(1)),
+                None,
+            ),
+            None
+        );
+        assert_eq!(
+            forced_leave_reason(
+                false,
+                false,
+                IDLE_SAFE_LEAVE_TIMEOUT,
+                Some(IDLE_SAFE_LEAVE_TIMEOUT.saturating_sub(Duration::from_millis(1))),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn 作废手牌证据对同一输入确定且绑定手牌与离桌意图() {
+        let table_id = [7; 32];
+        let roster_hash = [8; 32];
+        let leave_id = [9; 32];
+        let first = abandoned_hand_evidence_hash(&table_id, 12, &roster_hash, &leave_id);
+        let repeated = abandoned_hand_evidence_hash(&table_id, 12, &roster_hash, &leave_id);
+        let next_hand = abandoned_hand_evidence_hash(&table_id, 13, &roster_hash, &leave_id);
+        let other_leave = abandoned_hand_evidence_hash(&table_id, 12, &roster_hash, &[10; 32]);
+
+        assert_eq!(first, repeated);
+        assert_ne!(first, next_hand);
+        assert_ne!(first, other_leave);
     }
 }

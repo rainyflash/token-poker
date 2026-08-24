@@ -83,3 +83,29 @@ test("新一手开始会淘汰上一手私有与终态事件", () => {
     [["hand_protocol_started", 2]],
   );
 });
+
+test("签名离桌导致手牌作废时只清理手牌并保留房间", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "room_entered", { table_id: "table-a" }));
+  projection.observe(entry(2, "room_snapshot", { table_id: "table-a", local_role: "seated" }));
+  projection.observe(entry(3, "hand_protocol_started", { table_id: "table-a", hand_number: 7 }));
+  projection.observe(entry(4, "hand_ready", { table_id: "table-a", hand_number: 7 }));
+  projection.observe(entry(5, "hand_aborted_for_leave", { table_id: "table-a", hand_number: 7 }));
+
+  assert.deepEqual(
+    projection.merge([], 0).map((event) => event.event.type),
+    ["room_entered", "room_snapshot"],
+  );
+});
+
+test("强制安全离桌完成后清空匹配房间与手牌投影", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "pool_joined"));
+  projection.observe(entry(2, "room_entered"));
+  projection.observe(entry(3, "hand_protocol_started"));
+  projection.observe(entry(4, "safe_leave_requested"));
+  projection.observe(entry(5, "safe_leave_forced"));
+  projection.observe(entry(6, "safe_leave_completed"));
+
+  assert.deepEqual(projection.merge([], 0), []);
+});

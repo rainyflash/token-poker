@@ -61,7 +61,7 @@ test("官方插件通过 MCP 读取官方账户用量并返回隔离牌桌资源
       ...nodeOverride,
       TOKEN_HOLDEM_SIDECAR_PATH: join(pluginRoot, "bin", "token-holdem-sidecar.exe"),
       TOKEN_HOLDEM_RUNTIME_PATH: join(pluginRoot, "bin", "token-holdem-runtime.exe"),
-      TOKEN_HOLDEM_RUNTIME_PIPE: String.raw`\\.\pipe\token-holdem-runtime-v5-${randomBytes(12).toString("hex")}`,
+      TOKEN_HOLDEM_RUNTIME_PIPE: String.raw`\\.\pipe\token-holdem-runtime-v6-${randomBytes(12).toString("hex")}`,
       TOKEN_HOLDEM_RUNTIME_IDLE_TIMEOUT_SECONDS: "1",
       TOKEN_HOLDEM_CODEX_APP_SERVER_FIXTURE: join(
         sourceMcpRoot,
