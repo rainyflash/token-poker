@@ -2,6 +2,23 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.7] - 2026-08-23
+
+### Fixed
+
+- Treat `pagehide`, hidden visibility, and document freeze as temporary suspension instead of terminating the MCP session.
+- Recreate inline resize observation and force a fresh React snapshot when a suspended Token Poker view becomes visible again.
+- Reserve terminal cleanup for the MCP Apps `ui/resource-teardown` lifecycle signal.
+- Advertise only the inline and fullscreen display modes currently supported by the Codex Desktop host.
+
+### Added
+
+- Added regression coverage for page hide/show, visibility restoration, resize observer recovery, and non-terminal polling continuity.
+
+### Known limitation
+
+- Codex Desktop can still request an MCP App resource before `thread/resume` completes when reopening a task. The request is rejected before it reaches Token Poker; reopening Token Poker after the task resumes restores the shared runtime. See [openai/codex#34195](https://github.com/openai/codex/issues/34195).
+
 ## [0.4.6] - 2026-08-23
 
 ### Fixed
@@ -109,7 +126,8 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
-[0.4.6]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.6
+[0.4.7]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.7
+[0.4.6]: https://github.com/rainyflash/token-poker/compare/v0.4.4...7c7a9cd
 [0.4.4]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.4
 [0.4.3]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.3
 [0.4.2]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.2
