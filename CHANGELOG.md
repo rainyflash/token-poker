@@ -2,6 +2,13 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.12] - 2026-08-24
+
+### Fixed
+
+- Give the real Windows PowerShell launcher smoke test a sixty-second process budget so a loaded GitHub Windows runner cannot reject a valid helper startup at ten seconds.
+- Report installer timeouts without claiming the production five-minute duration when a caller deliberately configures a different deadline.
+
 ## [0.4.11] - 2026-08-24
 
 ### Fixed
@@ -191,6 +198,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.12]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.12
 [0.4.11]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.11
 [0.4.10]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.10
 [0.4.9]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.9

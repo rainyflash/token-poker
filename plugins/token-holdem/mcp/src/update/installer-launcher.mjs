@@ -180,7 +180,7 @@ function waitForInstallerExit(child, timeoutMs) {
     const timer = setTimeout(() => {
       finish(() => {
         child.unref();
-        rejectExit(new Error("The verified installer did not finish within five minutes"));
+        rejectExit(new Error("The verified installer did not finish before the installation timeout"));
       });
     }, timeoutMs);
     child.once("error", onError);

@@ -214,7 +214,7 @@ test(
       powershellResolver: async () =>
         join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       resultTimeoutMs: 2_000,
-      timeoutMs: 10_000,
+      timeoutMs: 60_000,
     });
 
     const result = await launcher.launch({
