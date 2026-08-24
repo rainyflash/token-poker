@@ -109,12 +109,14 @@ export function buildHostBridge(version) {
   let resizeCleanup = null;
   let resizeSetupFailed = false;
   let displayModeSettled = false;
+  let viewSuspended = document.visibilityState === "hidden";
+  let resumeScheduled = false;
   let commandQueue = Promise.resolve();
   let updateQueue = Promise.resolve();
   const sessionController = new AbortController();
   const app = new apps.App(
     { name: "token-holdem", version: ${JSON.stringify(version)} },
-    { availableDisplayModes: ["inline", "pip", "fullscreen"] },
+    { availableDisplayModes: ["inline", "fullscreen"] },
     { autoResize: false },
   );
   globalThis.__TOKEN_HOLDEM_MCP_APP__ = app;
@@ -152,7 +154,7 @@ export function buildHostBridge(version) {
   }
 
   function syncResizeNotifications(displayMode) {
-    if (!displayModeSettled || stopped) return;
+    if (!displayModeSettled || stopped || viewSuspended) return;
     if (displayMode === "inline") {
       if (resizeCleanup === null && !resizeSetupFailed) {
         try {
@@ -173,16 +175,50 @@ export function buildHostBridge(version) {
     stopped = true;
     stopResizeNotifications();
     globalThis.removeEventListener("pagehide", handlePageHide);
+    globalThis.removeEventListener("pageshow", handlePageShow);
+    document.removeEventListener?.("visibilitychange", handleVisibilityChange);
+    document.removeEventListener?.("freeze", handlePageHide);
+    document.removeEventListener?.("resume", handlePageShow);
     app.removeEventListener("hostcontextchanged", applyHostContext);
     app.removeEventListener("toolresult", consumeResult);
     sessionController.abort(sessionStoppedError(reason));
   }
 
   function handlePageHide() {
-    stopSession("Token Poker iframe was unloaded");
+    if (stopped || viewSuspended) return;
+    viewSuspended = true;
+    stopResizeNotifications();
   }
 
-  globalThis.addEventListener("pagehide", handlePageHide, { once: true });
+  function handlePageShow() {
+    if (stopped || !viewSuspended || resumeScheduled) return;
+    viewSuspended = false;
+    resumeScheduled = true;
+    const refresh = () => {
+      resumeScheduled = false;
+      if (stopped || viewSuspended) return;
+      applyHostContext(app.getHostContext?.());
+      globalThis.dispatchEvent(new CustomEvent("token-holdem:resume", {
+        detail: { latestSequence },
+      }));
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(refresh);
+    } else {
+      globalThis.setTimeout(refresh, 0);
+    }
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === "hidden") handlePageHide();
+    else handlePageShow();
+  }
+
+  globalThis.addEventListener("pagehide", handlePageHide);
+  globalThis.addEventListener("pageshow", handlePageShow);
+  document.addEventListener?.("visibilitychange", handleVisibilityChange);
+  document.addEventListener?.("freeze", handlePageHide);
+  document.addEventListener?.("resume", handlePageShow);
 
   function publishSidecarEvent(detail) {
     if (detail && detail.type === "token_snapshot_accepted") {

@@ -10,6 +10,7 @@ function flushTasks() {
 function createHarness(options = {}) {
   const state = {
     app: null,
+    appCapabilities: null,
     appOptions: null,
     calls: [],
     cleanupCount: 0,
@@ -20,6 +21,7 @@ function createHarness(options = {}) {
     teardownRegisteredBeforeConnect: false,
   };
   const globalListeners = new Map();
+  const documentListeners = new Map();
   const nodes = new Map([
     ["token-holdem-root", { id: "token-holdem-root" }],
     ["token-holdem-portals", { id: "token-holdem-portals" }],
@@ -27,13 +29,14 @@ function createHarness(options = {}) {
   ]);
 
   class MockApp {
-    constructor(_info, _capabilities, appOptions) {
+    constructor(_info, capabilities, appOptions) {
       this.listeners = new Map();
       this.hostContext = {
         displayMode: options.initialDisplayMode ?? "fullscreen",
         theme: "light",
       };
       state.app = this;
+      state.appCapabilities = capabilities;
       state.appOptions = appOptions;
     }
 
@@ -115,9 +118,21 @@ function createHarness(options = {}) {
     clearTimeout,
     console,
     document: {
+      visibilityState: options.initialVisibilityState ?? "visible",
+      addEventListener(type, listener) {
+        const listeners = documentListeners.get(type) ?? new Set();
+        listeners.add(listener);
+        documentListeners.set(type, listeners);
+      },
       getElementById(id) {
         return nodes.get(id) ?? null;
       },
+      removeEventListener(type, listener) {
+        documentListeners.get(type)?.delete(listener);
+      },
+    },
+    requestAnimationFrame(callback) {
+      return setImmediate(() => callback(Date.now()));
     },
     setTimeout: options.setTimeout ?? setTimeout,
     __TOKEN_HOLDEM_MCP_APPS__: {
@@ -152,6 +167,10 @@ function createHarness(options = {}) {
     dispatchGlobal(type) {
       for (const listener of globalListeners.get(type) ?? []) listener({ type });
     },
+    dispatchDocument(type, visibilityState) {
+      if (visibilityState !== undefined) sandbox.document.visibilityState = visibilityState;
+      for (const listener of documentListeners.get(type) ?? []) listener({ type });
+    },
     async ready() {
       await state.app.ready;
       await flushTasks();
@@ -178,7 +197,7 @@ test("桥接依赖损坏时保留可见错误，而不是白屏", () => {
   assert.equal(bootStatus.textContent, sandbox.__tokenHoldemBootError);
 });
 
-test("握手完成前 iframe 被卸载时不会继续请求全屏", async () => {
+test("握手完成前暂时隐藏不会被误判为永久 teardown", async () => {
   let resolveConnect;
   const connectPromise = new Promise((resolve) => {
     resolveConnect = resolve;
@@ -189,8 +208,55 @@ test("握手完成前 iframe 被卸载时不会继续请求全屏", async () => 
   resolveConnect();
   await harness.ready();
 
-  assert.equal(harness.state.requestDisplayModeCount, 0);
-  assert.equal(harness.state.calls.length, 0);
+  assert.equal(harness.state.requestDisplayModeCount, 1);
+  assert.equal(
+    harness.state.calls.filter((entry) => entry.params.name === "token_holdem_poll").length,
+    1,
+  );
+  const pollCall = harness.state.calls.find((entry) => entry.params.name === "token_holdem_poll");
+  assert.equal(pollCall?.options.signal.aborted, false);
+
+  await harness.app.onteardown({}, {});
+});
+
+test("pagehide 后 pageshow 会重绘而不终止 MCP 会话", async () => {
+  const harness = createHarness();
+  await harness.ready();
+  const pollCall = harness.state.calls.find((entry) => entry.params.name === "token_holdem_poll");
+
+  harness.dispatchGlobal("pagehide");
+  await flushTasks();
+  assert.equal(pollCall?.options.signal.aborted, false);
+
+  harness.dispatchGlobal("pageshow");
+  await flushTasks();
+  assert.equal(
+    harness.state.dispatchedEvents.filter((event) => event.type === "token-holdem:resume").length,
+    1,
+  );
+  assert.equal(pollCall?.options.signal.aborted, false);
+
+  await harness.app.onteardown({}, {});
+});
+
+test("visibility 恢复会重建 inline 尺寸监听并触发重绘", async () => {
+  const harness = createHarness();
+  await harness.ready();
+  harness.app.emit("hostcontextchanged", { displayMode: "inline" });
+  assert.equal(harness.state.resizeSetupCount, 1);
+
+  harness.dispatchDocument("visibilitychange", "hidden");
+  assert.equal(harness.state.cleanupCount, 1);
+
+  harness.dispatchDocument("visibilitychange", "visible");
+  await flushTasks();
+  assert.equal(harness.state.resizeSetupCount, 2);
+  assert.equal(
+    harness.state.dispatchedEvents.filter((event) => event.type === "token-holdem:resume").length,
+    1,
+  );
+
+  await harness.app.onteardown({}, {});
 });
 
 test("异步连接失败会通知 React 错误边界", async () => {
@@ -209,6 +275,10 @@ test("宿主桥接在 connect 前注册 teardown，并禁用全屏自动测高",
 
   assert.equal(harness.state.teardownRegisteredBeforeConnect, true);
   assert.equal(harness.state.appOptions.autoResize, false);
+  assert.deepEqual(
+    [...harness.state.appCapabilities.availableDisplayModes],
+    ["inline", "fullscreen"],
+  );
   assert.equal(harness.state.resizeSetupCount, 0);
 
   await harness.app.onteardown({}, {});

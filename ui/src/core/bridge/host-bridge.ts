@@ -283,6 +283,7 @@ class HostBridgeStore {
     globalThis.addEventListener("token-holdem:account-binding", this.#handleAccountBinding);
     globalThis.addEventListener("token-poker:update-status", this.#handleUpdateStatus);
     globalThis.addEventListener("token-holdem:sidecar", this.#handleSidecarEvent);
+    globalThis.addEventListener("token-holdem:resume", this.#handleHostResume);
     for (const rawEvent of globalThis.__tokenHoldemBufferedSidecarEvents ?? []) {
       const event = parseSidecarEvent(rawEvent);
       if (event !== null) this.#applySidecarEvent(event);
@@ -390,6 +391,10 @@ class HostBridgeStore {
     const sidecarEvent = parseSidecarEvent(event.detail);
     if (sidecarEvent === null) return;
     this.#applySidecarEvent(sidecarEvent);
+  };
+
+  #handleHostResume = (): void => {
+    this.#replace({ ...this.#snapshot });
   };
 
   #applySidecarEvent(event: SidecarEvent): void {
