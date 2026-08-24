@@ -33,6 +33,7 @@ pub enum SidecarCommand {
     },
     CancelPublicPool,
     EnsureIdentity {
+        request_id: Option<String>,
         recovery_secret: String,
         device_label: String,
     },
@@ -87,6 +88,8 @@ pub enum SidecarCommandError {
     TooLong { maximum: usize, actual: usize },
     #[error("控制命令不是合法 JSON：{0}")]
     InvalidJson(#[from] serde_json::Error),
+    #[error("控制命令请求 ID 必须是规范 UUID")]
+    InvalidRequestId,
 }
 
 pub fn decode_command_line(line: &str) -> Result<SidecarCommand, SidecarCommandError> {
@@ -96,7 +99,59 @@ pub fn decode_command_line(line: &str) -> Result<SidecarCommand, SidecarCommandE
             actual: line.len(),
         });
     }
-    Ok(serde_json::from_str(line)?)
+    let command: SidecarCommand = serde_json::from_str(line)?;
+    if command
+        .request_id()
+        .is_some_and(|request_id| !is_canonical_uuid(request_id))
+    {
+        return Err(SidecarCommandError::InvalidRequestId);
+    }
+    Ok(command)
+}
+
+impl SidecarCommand {
+    #[must_use]
+    pub fn request_id(&self) -> Option<&str> {
+        match self {
+            Self::EnsureIdentity { request_id, .. } => request_id.as_deref(),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn command_type(&self) -> &'static str {
+        match self {
+            Self::TokenSnapshot { .. } => "token_snapshot",
+            Self::Dial { .. } => "dial",
+            Self::UseRelay { .. } => "use_relay",
+            Self::ConfigureDiscovery { .. } => "configure_discovery",
+            Self::AddExternalAddress { .. } => "add_external_address",
+            Self::JoinPublicPool { .. } => "join_public_pool",
+            Self::CancelPublicPool => "cancel_public_pool",
+            Self::EnsureIdentity { .. } => "ensure_identity",
+            Self::CreateIdentity { .. } => "create_identity",
+            Self::RestoreIdentity { .. } => "restore_identity",
+            Self::RestoreRemoteIdentity { .. } => "restore_remote_identity",
+            Self::CreateFriendRoom { .. } => "create_friend_room",
+            Self::JoinFriendRoom { .. } => "join_friend_room",
+            Self::ConfigureArchiveNodes { .. } => "configure_archive_nodes",
+            Self::SyncStatistics => "sync_statistics",
+            Self::FetchArchivedReceipt { .. } => "fetch_archived_receipt",
+            Self::SubmitAction { .. } => "submit_action",
+            Self::LeaveTable => "leave_table",
+            Self::Shutdown => "shutdown",
+        }
+    }
+}
+
+fn is_canonical_uuid(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+    value.bytes().enumerate().all(|(index, byte)| match index {
+        8 | 13 | 18 | 23 => byte == b'-',
+        _ => byte.is_ascii_hexdigit(),
+    })
 }
 
 #[cfg(test)]
@@ -116,6 +171,22 @@ mod tests {
         assert!(matches!(
             ensure_identity,
             SidecarCommand::EnsureIdentity { .. }
+        ));
+
+        let correlated_identity = decode_command_line(
+            r#"{"type":"ensure_identity","request_id":"7c98e82f-55fd-45e4-9a62-bd26dcdebb18","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
+        )
+        .expect("带请求 ID 的身份命令必须能被解码");
+        assert_eq!(
+            correlated_identity.request_id(),
+            Some("7c98e82f-55fd-45e4-9a62-bd26dcdebb18")
+        );
+
+        assert!(matches!(
+            decode_command_line(
+                r#"{"type":"ensure_identity","request_id":"not-a-uuid","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
+            ),
+            Err(SidecarCommandError::InvalidRequestId)
         ));
 
         let oversized = "x".repeat(MAX_COMMAND_LINE_BYTES + 1);

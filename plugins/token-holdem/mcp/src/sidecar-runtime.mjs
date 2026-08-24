@@ -15,11 +15,13 @@ import {
   runtimeAttachFrame,
   RUNTIME_PROTOCOL_VERSION,
 } from "./runtime-protocol.mjs";
+import { SessionEventProjection } from "./session-event-projection.mjs";
 
 const EVENT_BUFFER_LIMIT = 4_096;
 const CONNECT_TIMEOUT_MS = 15_000;
 const CONNECT_RETRY_MS = 100;
 const TOKEN_ACK_TIMEOUT_MS = 10_000;
+const IDENTITY_ACK_TIMEOUT_MS = 10_000;
 export const MAX_POLL_WAIT_MS = 25_000;
 
 export class SidecarRuntime {
@@ -38,11 +40,13 @@ export class SidecarRuntime {
   #roomActive = false;
   #handActive = false;
   #events = [];
+  #sessionProjection = new SessionEventProjection();
   #sequence = 0;
   #eventSignal = new EventEmitter();
   #launchPlan = null;
   #tokenSnapshot = null;
   #accountBinding = null;
+  #identitySnapshot = null;
   #serviceCacheQueue = Promise.resolve();
 
   constructor(pluginRoot) {
@@ -65,6 +69,10 @@ export class SidecarRuntime {
     return this.#accountBinding;
   }
 
+  get currentState() {
+    return Object.freeze({ identity: this.#identitySnapshot });
+  }
+
   async ensureStarted() {
     if (this.ready) return;
     if (this.#closing) throw new Error("Token Poker MCP 连接正在退出");
@@ -78,6 +86,37 @@ export class SidecarRuntime {
   async send(command) {
     await this.ensureStarted();
     await this.#write(command);
+  }
+
+  async ensureIdentity(command, requestId) {
+    validateRequestId(requestId);
+    const initialSequence = this.#sequence;
+    await this.send({ ...command, request_id: requestId });
+    let cursor = initialSequence;
+    const deadline = Date.now() + IDENTITY_ACK_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const batch = await this.waitForEvents(
+        cursor,
+        Math.min(1_000, Math.max(0, deadline - Date.now())),
+      );
+      for (const entry of batch.events) {
+        if (entry.event?.request_id !== requestId) continue;
+        if (entry.event.type === "identity_ready") {
+          const identity = parseIdentitySnapshot(entry.event);
+          if (identity === null) throw new Error("牌局内核返回了无效的玩家身份确认");
+          return identity;
+        }
+        if (entry.event.type === "command_failed") {
+          throw new Error(
+            typeof entry.event.message === "string"
+              ? entry.event.message
+              : "牌局内核拒绝了玩家身份命令",
+          );
+        }
+      }
+      cursor = batch.latest_sequence;
+    }
+    throw new Error("牌局内核未在超时前确认玩家身份");
   }
 
   async publishTokenSnapshot(command) {
@@ -116,12 +155,13 @@ export class SidecarRuntime {
     validateSequence(afterSequence);
     const firstAvailableSequence = this.#events[0]?.sequence ?? this.#sequence + 1;
     return Object.freeze({
-      events: this.#events.filter((entry) => entry.sequence > afterSequence),
+      events: this.#sessionProjection.merge(this.#events, afterSequence),
       latest_sequence: this.#sequence,
       history_truncated: afterSequence + 1 < firstAvailableSequence,
       sidecar_ready: this.ready,
       runtime_id: this.#runtimeId,
       runtime_generation: this.#runtimeGeneration,
+      current_state: this.currentState,
     });
   }
 
@@ -289,7 +329,7 @@ export class SidecarRuntime {
     if (frame.history_truncated) {
       this.#publish({
         type: "warning",
-        message: "共享运行时事件历史已截断；当前牌局状态可能需要重新进入牌桌后刷新。",
+        message: "共享运行时的旧诊断事件已截断；当前身份、匹配、房间与手牌状态已从保留投影恢复。",
       });
     }
   }
@@ -307,6 +347,10 @@ export class SidecarRuntime {
 
   #consumeSidecarEvent(event, shouldCacheService) {
     this.#updateBusyState(event.type);
+    if (event.type === "identity_ready") {
+      const identity = parseIdentitySnapshot(event);
+      if (identity !== null) this.#identitySnapshot = identity;
+    }
     if (event.type === "token_snapshot_accepted") {
       const {
         lifetime_tokens: lifetimeTokens,
@@ -387,11 +431,13 @@ export class SidecarRuntime {
   #resetProjection() {
     this.#runtimeSequence = 0;
     this.#events = [];
+    this.#sessionProjection.clear();
     this.#poolActive = false;
     this.#roomActive = false;
     this.#handActive = false;
     this.#tokenSnapshot = null;
     this.#accountBinding = null;
+    this.#identitySnapshot = null;
   }
 
   async #restart() {
@@ -422,7 +468,9 @@ export class SidecarRuntime {
 
   #publish(event) {
     this.#sequence += 1;
-    this.#events.push(Object.freeze({ sequence: this.#sequence, event }));
+    const entry = Object.freeze({ sequence: this.#sequence, event });
+    this.#events.push(entry);
+    this.#sessionProjection.observe(entry);
     if (this.#events.length > EVENT_BUFFER_LIMIT) {
       this.#events.splice(0, this.#events.length - EVENT_BUFFER_LIMIT);
     }
@@ -545,4 +593,42 @@ function validateSequence(value) {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error("事件序号必须是非负安全整数");
   }
+}
+
+function validateRequestId(value) {
+  if (
+    typeof value !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value)
+  ) {
+    throw new Error("命令请求 ID 必须是规范 UUID");
+  }
+}
+
+function parseIdentitySnapshot(value) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    typeof value.player_id !== "string" ||
+    value.player_id.length === 0 ||
+    typeof value.device_public_key !== "string" ||
+    value.device_public_key.length === 0 ||
+    typeof value.device_label !== "string" ||
+    value.device_label.length === 0 ||
+    !Number.isSafeInteger(value.certificate_expires_at_unix_ms) ||
+    value.certificate_expires_at_unix_ms < 0 ||
+    typeof value.recovery_envelope !== "string" ||
+    value.recovery_envelope.length === 0 ||
+    !Number.isSafeInteger(value.remote_replicas) ||
+    value.remote_replicas < 0
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    player_id: value.player_id,
+    device_public_key: value.device_public_key,
+    device_label: value.device_label,
+    certificate_expires_at_unix_ms: value.certificate_expires_at_unix_ms,
+    recovery_envelope: value.recovery_envelope,
+    remote_replicas: value.remote_replicas,
+  });
 }

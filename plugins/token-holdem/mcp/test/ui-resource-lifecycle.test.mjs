@@ -162,7 +162,7 @@ function createHarness(options = {}) {
   return {
     app: state.app,
     command(payload) {
-      sandbox.tokenHoldemCommand(payload);
+      return sandbox.tokenHoldemCommand(payload);
     },
     dispatchGlobal(type) {
       for (const listener of globalListeners.get(type) ?? []) listener({ type });
@@ -236,6 +236,221 @@ test("pagehide 后 pageshow 会重绘而不终止 MCP 会话", async () => {
   );
   assert.equal(pollCall?.options.signal.aborted, false);
 
+  await harness.app.onteardown({}, {});
+});
+
+test("重新挂载时忽略宿主重放的旧轮询水位并从零恢复牌桌", async () => {
+  let pollCount = 0;
+  const harness = createHarness({
+    callServerTool(params, requestOptions) {
+      if (params.name !== "token_holdem_poll") {
+        return Promise.resolve({ structuredContent: {} });
+      }
+      pollCount += 1;
+      if (pollCount === 1) {
+        return Promise.resolve({
+          structuredContent: {
+            action: "poll",
+            latest_sequence: 42,
+            history_truncated: false,
+            events: [
+              {
+                sequence: 11,
+                event: {
+                  type: "room_entered",
+                  table_id: "table-restore",
+                  level_id: "1m-2m",
+                },
+              },
+              {
+                sequence: 42,
+                event: {
+                  type: "room_snapshot",
+                  table_id: "table-restore",
+                  membership_version: 3,
+                  seats: [],
+                  waiting: [],
+                  capacity: 6,
+                  local_role: "seated",
+                  hand_number: null,
+                  next_hand_countdown_ms: 1_000,
+                },
+              },
+            ],
+          },
+        });
+      }
+      return new Promise((_resolve, reject) => {
+        requestOptions.signal.addEventListener(
+          "abort",
+          () => reject(requestOptions.signal.reason),
+          { once: true },
+        );
+      });
+    },
+  });
+
+  harness.app.emit("toolresult", {
+    structuredContent: {
+      action: "poll",
+      latest_sequence: 42,
+      history_truncated: false,
+      events: [],
+    },
+  });
+  await harness.ready();
+
+  const pollCalls = harness.state.calls.filter(
+    (entry) => entry.params.name === "token_holdem_poll",
+  );
+  assert.equal(pollCalls[0]?.params.arguments.after_sequence, 0);
+  assert.equal(pollCalls[1]?.params.arguments.after_sequence, 42);
+  assert.deepEqual(
+    harness.state.dispatchedEvents
+      .filter((event) => event.type === "token-holdem:sidecar")
+      .map((event) => event.detail?.type)
+      .filter((type) => type === "room_entered" || type === "room_snapshot"),
+    ["room_entered", "room_snapshot"],
+  );
+
+  await harness.app.onteardown({}, {});
+});
+
+test("身份命令只在请求 ID 对应的内核确认返回后报告成功", async () => {
+  let capturedRequestId = null;
+  const harness = createHarness({
+    callServerTool(params, requestOptions) {
+      if (params.name === "token_holdem_command") {
+        capturedRequestId = params.arguments.request_id;
+        return Promise.resolve({
+          structuredContent: {
+            command_result: {
+              request_id: capturedRequestId,
+              status: "confirmed",
+              error: null,
+            },
+            current_state: {
+              identity: {
+                player_id: "player-confirmed",
+                device_public_key: "device-key",
+                device_label: "测试设备",
+                certificate_expires_at_unix_ms: 99_999,
+                recovery_envelope: "THR1-confirmed",
+                remote_replicas: 2,
+              },
+            },
+            latest_sequence: 1,
+            events: [],
+          },
+        });
+      }
+      if (params.name === "token_holdem_poll") {
+        return new Promise((_resolve, reject) => {
+          requestOptions.signal.addEventListener(
+            "abort",
+            () => reject(requestOptions.signal.reason),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve({ structuredContent: {} });
+    },
+  });
+  await harness.ready();
+
+  const outcome = await harness.command(JSON.stringify({
+    type: "ensure_identity",
+    recovery_secret: "fixed-secret",
+    device_label: "测试设备",
+  }));
+
+  assert.equal(outcome.ok, true);
+  assert.match(capturedRequestId, /^[0-9a-f-]{36}$/iu);
+  assert.equal(
+    harness.state.dispatchedEvents.findLast(
+      (event) => event.type === "token-holdem:current-state",
+    )?.detail?.identity?.player_id,
+    "player-confirmed",
+  );
+
+  await harness.app.onteardown({}, {});
+});
+
+test("身份命令拒绝与当前请求 ID 不匹配的陈旧回执", async () => {
+  const harness = createHarness({
+    callServerTool(params, requestOptions) {
+      if (params.name === "token_holdem_command") {
+        return Promise.resolve({
+          structuredContent: {
+            command_result: {
+              request_id: "00000000-0000-4000-8000-000000000000",
+              status: "confirmed",
+              error: null,
+            },
+          },
+        });
+      }
+      if (params.name === "token_holdem_poll") {
+        return new Promise((_resolve, reject) => {
+          requestOptions.signal.addEventListener(
+            "abort",
+            () => reject(requestOptions.signal.reason),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve({ structuredContent: {} });
+    },
+  });
+  await harness.ready();
+
+  const outcome = await harness.command(JSON.stringify({
+    type: "ensure_identity",
+    recovery_secret: "fixed-secret",
+    device_label: "测试设备",
+  }));
+
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.error, /mismatched command result/u);
+  await harness.app.onteardown({}, {});
+});
+
+test("身份命令拒绝只有入队而没有内核确认的回执", async () => {
+  const harness = createHarness({
+    callServerTool(params, requestOptions) {
+      if (params.name === "token_holdem_command") {
+        return Promise.resolve({
+          structuredContent: {
+            command_result: {
+              request_id: params.arguments.request_id,
+              status: "accepted",
+              error: null,
+            },
+          },
+        });
+      }
+      if (params.name === "token_holdem_poll") {
+        return new Promise((_resolve, reject) => {
+          requestOptions.signal.addEventListener(
+            "abort",
+            () => reject(requestOptions.signal.reason),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve({ structuredContent: {} });
+    },
+  });
+  await harness.ready();
+
+  const outcome = await harness.command(JSON.stringify({
+    type: "ensure_identity",
+    recovery_secret: "fixed-secret",
+    device_label: "测试设备",
+  }));
+
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.error, /did not confirm the identity command/u);
   await harness.app.onteardown({}, {});
 });
 

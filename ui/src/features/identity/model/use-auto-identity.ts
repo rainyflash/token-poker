@@ -5,6 +5,7 @@ import type {
   HostCommand,
 } from "../../../core/bridge/contracts";
 import { useI18n } from "../../../core/i18n/use-i18n";
+import { ensurePlayerIdentity } from "./ensure-player-identity";
 
 export interface RecoveryKit {
   readonly accountFingerprint: string;
@@ -40,47 +41,71 @@ function defaultDeviceLabel(windowsLabel: string, fallbackLabel: string): string
 
 export function useAutoIdentity(
   bridge: BridgeSnapshot,
-  sendCommand: (command: HostCommand) => CommandResult,
+  sendConfirmedCommand: (command: HostCommand) => Promise<CommandResult>,
 ): AutoIdentityState {
   const { t } = useI18n();
-  const attemptedFingerprint = useRef<string | null>(null);
+  const activeAttempt = useRef<{
+    readonly fingerprint: string;
+    readonly controller: AbortController;
+  } | null>(null);
   const [recoverySeed, setRecoverySeed] = useState<RecoverySeed | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(
+    () => () => {
+      activeAttempt.current?.controller.abort();
+      activeAttempt.current = null;
+    },
+    [],
+  );
+
   useEffect(() => {
     const fingerprint = bridge.accountBinding?.accountFingerprint ?? null;
+    if (
+      activeAttempt.current !== null &&
+      activeAttempt.current.fingerprint !== fingerprint
+    ) {
+      activeAttempt.current.controller.abort();
+      activeAttempt.current = null;
+    }
     if (
       bridge.identity !== null ||
       !bridge.sidecarReady ||
       bridge.officialUsage.phase !== "ready" ||
       fingerprint === null ||
-      attemptedFingerprint.current === fingerprint
+      activeAttempt.current?.fingerprint === fingerprint
     ) {
       return;
     }
 
-    attemptedFingerprint.current = fingerprint;
+    const controller = new AbortController();
+    activeAttempt.current = { fingerprint, controller };
     const recoverySecret = generateRecoverySecret();
-    const result = sendCommand({
+    const command = {
       type: "ensure_identity",
       recovery_secret: recoverySecret,
       device_label: defaultDeviceLabel(
         t("identity.windowsWorkstation"),
         t("identity.currentDeviceFallback"),
       ),
-    });
-    if (!result.ok) {
-      globalThis.queueMicrotask(() => setError(result.error));
-      return;
-    }
-    globalThis.queueMicrotask(() => {
-      setError(null);
-      setRecoverySeed({
-        accountFingerprint: fingerprint,
-        recoverySecret,
-      });
-    });
-  }, [bridge.accountBinding, bridge.identity, bridge.officialUsage.phase, bridge.sidecarReady, sendCommand, t]);
+    } as const;
+    void ensurePlayerIdentity(command, sendConfirmedCommand, { signal: controller.signal }).then(
+      (outcome) => {
+        if (activeAttempt.current?.controller !== controller) return;
+        activeAttempt.current = null;
+        if (outcome.status === "cancelled") return;
+        if (outcome.status === "failed") {
+          setError(outcome.error);
+          return;
+        }
+        setError(null);
+        setRecoverySeed({
+          accountFingerprint: fingerprint,
+          recoverySecret,
+        });
+      },
+    );
+  }, [bridge.accountBinding, bridge.identity, bridge.officialUsage.phase, bridge.sidecarReady, sendConfirmedCommand, t]);
 
   const recoveryKit =
     recoverySeed === null

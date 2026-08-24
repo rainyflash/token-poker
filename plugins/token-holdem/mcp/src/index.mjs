@@ -167,20 +167,44 @@ registerAppTool(
     },
     _meta: appToolMeta(["app"], "Submitting table command…", "Table command submitted"),
   },
-  async ({ command }) => {
+  async ({ request_id: requestId, command }) => {
     if (FRESH_USAGE_COMMANDS.has(command.type)) {
       const usageError = await refreshUsageError(false);
       if (usageError !== null) {
         return toolResult(
           `Table command stopped: ${usageError}`,
-          { ...currentPayload("command"), official_usage_error: usageError },
+          {
+            ...currentPayload("command"),
+            official_usage_error: usageError,
+            command_result: commandResult(requestId, "failed", usageError),
+          },
           { isError: true },
         );
       }
     }
     const beforeSequence = runtime.latestSequence;
-    await dispatchHostCommand(runtime, command);
-    return toolResult("Table command was passed to the local game core.", payloadAfter("command", beforeSequence));
+    try {
+      const status = await dispatchHostCommand(runtime, command, requestId);
+      return toolResult(
+        status === "confirmed"
+          ? "Table command was confirmed by the local game core."
+          : "Table command was passed to the local game core.",
+        {
+          ...payloadAfter("command", beforeSequence),
+          command_result: commandResult(requestId, status),
+        },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Table command failed";
+      return toolResult(
+        `Table command failed: ${message}`,
+        {
+          ...payloadAfter("command", beforeSequence),
+          command_result: commandResult(requestId, "failed", message),
+        },
+        { isError: true },
+      );
+    }
   },
 );
 
@@ -343,6 +367,14 @@ function toolResult(message, payload, { isError = false } = {}) {
       widgetData: payload,
     },
   };
+}
+
+function commandResult(requestId, status, error = null) {
+  return Object.freeze({
+    request_id: requestId,
+    status,
+    error,
+  });
 }
 
 function appToolMeta(visibility, invoking, invoked) {

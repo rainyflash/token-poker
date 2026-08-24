@@ -88,12 +88,18 @@ enum SidecarEvent {
         source: TokenSnapshotSource,
     },
     IdentityReady {
+        request_id: Option<String>,
         player_id: String,
         device_public_key: String,
         device_label: String,
         certificate_expires_at_unix_ms: u64,
         recovery_envelope: String,
         remote_replicas: u16,
+    },
+    CommandFailed {
+        request_id: String,
+        command_type: &'static str,
+        message: String,
     },
     ListenAddress {
         address: String,
@@ -294,7 +300,16 @@ async fn main() -> Result<()> {
                                 return Ok(());
                             }
                             Ok(command) => {
+                                let request_id = command.request_id().map(str::to_owned);
+                                let command_type = command.command_type();
                                 if let Err(error) = handle_command(&mut swarm, &mut state, command) {
+                                    if let Some(request_id) = request_id {
+                                        emit(&SidecarEvent::CommandFailed {
+                                            request_id,
+                                            command_type,
+                                            message: format!("{error:#}"),
+                                        })?;
+                                    }
                                     emit(&SidecarEvent::Warning {
                                         message: format!("控制命令执行失败：{error:#}"),
                                     })?;
@@ -395,11 +410,12 @@ fn handle_command(
             emit(&event)?;
         }
         SidecarCommand::EnsureIdentity {
+            request_id,
             recovery_secret,
             device_label,
         } => {
             if let Some(identity) = state.identity.as_ref() {
-                emit_identity_ready(identity)?;
+                emit_identity_ready(identity, request_id.as_deref())?;
             } else {
                 let account_fingerprint = identity_account_fingerprint(state)?.to_owned();
                 let recovery_secret = Zeroizing::new(recovery_secret);
@@ -409,7 +425,7 @@ fn handle_command(
                     &account_fingerprint,
                     unix_time_ms()?,
                 )?;
-                emit_identity_ready(&identity)?;
+                emit_identity_ready(&identity, request_id.as_deref())?;
                 state.identity = Some(identity);
                 publish_identity_recovery(swarm, state)?;
                 sync_statistics(swarm, state)?;
@@ -428,7 +444,7 @@ fn handle_command(
                 &account_fingerprint,
                 unix_time_ms()?,
             )?;
-            emit_identity_ready(&identity)?;
+            emit_identity_ready(&identity, None)?;
             state.identity = Some(identity);
             publish_identity_recovery(swarm, state)?;
             sync_statistics(swarm, state)?;
@@ -448,7 +464,7 @@ fn handle_command(
                 &account_fingerprint,
                 unix_time_ms()?,
             )?;
-            emit_identity_ready(&identity)?;
+            emit_identity_ready(&identity, None)?;
             state.identity = Some(identity);
             publish_identity_recovery(swarm, state)?;
             sync_statistics(swarm, state)?;
@@ -1419,8 +1435,9 @@ fn activate_identity(
     })
 }
 
-fn emit_identity_ready(identity: &ActiveIdentity) -> Result<()> {
+fn emit_identity_ready(identity: &ActiveIdentity, request_id: Option<&str>) -> Result<()> {
     emit(&SidecarEvent::IdentityReady {
+        request_id: request_id.map(str::to_owned),
         player_id: identity.player_id.to_string(),
         device_public_key: identity.device.public_key().to_string(),
         device_label: identity.certificate.label().to_owned(),
@@ -1823,7 +1840,7 @@ fn process_archive_events(
     }
     if identity_status_changed {
         if let Some(identity) = state.identity.as_ref() {
-            emit_identity_ready(identity)?;
+            emit_identity_ready(identity, None)?;
         }
     }
     if remote_restore_ready {
@@ -1883,7 +1900,7 @@ fn complete_remote_restore(
     };
     state.archive.cancel_recovery_fetch(locator);
     state.pending_remote_restore = None;
-    emit_identity_ready(&identity)?;
+    emit_identity_ready(&identity, None)?;
     state.identity = Some(identity);
     publish_identity_recovery(swarm, state)?;
     sync_statistics(swarm, state)

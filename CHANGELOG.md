@@ -2,6 +2,30 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.10] - 2026-08-24
+
+### Fixed
+
+- Require a correlated acknowledgement from the local game core before automatic identity creation can report success.
+- Retry transient identity initialization failures with a bounded backoff while reusing the same recovery secret.
+- Restore the active player identity, matchmaking state, room, and hand after Codex remounts the plugin or the diagnostic event buffer is truncated.
+- Hydrate every newly mounted Codex view from sequence zero instead of trusting a stale watermark replayed by the host.
+- Keep an identity attempt alive while its own confirmation updates React state, preserving the recovery kit generated for that identity.
+
+### Changed
+
+- Advance the shared-runtime protocol to version 5 so this release cannot attach to an incompatible older game core.
+
+### Added
+
+- Added regression coverage for correlated command results, bounded identity retries, current-state projection, remount hydration, and cross-conversation recovery.
+
+## [0.4.9] - 2026-08-24
+
+### Fixed
+
+- Teach the bundled agent workflow to discover lazy plugin tools before diagnosing a cross-task load failure.
+
 ## [0.4.8] - 2026-08-23
 
 ### Fixed
@@ -145,6 +169,8 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.10]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.10
+[0.4.9]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.9
 [0.4.8]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.8
 [0.4.7]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.7
 [0.4.6]: https://github.com/rainyflash/token-poker/compare/v0.4.4...7c7a9cd

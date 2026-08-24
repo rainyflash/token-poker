@@ -1,0 +1,85 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { SessionEventProjection } from "../src/session-event-projection.mjs";
+
+function entry(sequence, type, fields = {}) {
+  return Object.freeze({ sequence, event: Object.freeze({ type, ...fields }) });
+}
+
+test("事件缓存截断后仍回放当前房间和手牌投影", () => {
+  const projection = new SessionEventProjection();
+  const current = [
+    entry(1, "identity_ready", { player_id: "player-a" }),
+    entry(2, "pool_joined", { level_id: "1m-2m", buy_in: 80_000_000 }),
+    entry(8, "room_entered", { table_id: "table-a", level_id: "1m-2m" }),
+    entry(11, "room_snapshot", { table_id: "table-a", local_role: "playing" }),
+    entry(15, "hand_protocol_started", { table_id: "table-a", hand_number: 9 }),
+    entry(19, "hand_ready", { table_id: "table-a", hand_number: 9 }),
+    entry(5_100, "hand_state", { table_id: "table-a", hand_number: 9, sequence: 31 }),
+  ];
+  for (const event of current) projection.observe(event);
+
+  const replay = projection.merge(
+    [entry(5_099, "warning", { message: "retained" }), current.at(-1)],
+    0,
+  );
+
+  assert.deepEqual(
+    replay.map((event) => event.event.type),
+    [
+      "identity_ready",
+      "pool_joined",
+      "room_entered",
+      "room_snapshot",
+      "hand_protocol_started",
+      "hand_ready",
+      "warning",
+      "hand_state",
+    ],
+  );
+});
+
+test("身份事件超过普通缓存上限后仍存在于当前状态投影", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "identity_ready", { player_id: "player-a" }));
+
+  assert.deepEqual(
+    projection.merge([], 0).map((event) => event.event.type),
+    ["identity_ready"],
+  );
+});
+
+test("离桌完成后不会复活旧房间投影", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "room_entered", { table_id: "table-a" }));
+  projection.observe(entry(2, "hand_protocol_started", { table_id: "table-a" }));
+  projection.observe(entry(3, "room_closed", { table_id: "table-a" }));
+
+  assert.deepEqual(projection.merge([], 0), []);
+});
+
+test("加入超时关闭临时房间时保留公开匹配投影", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "pool_joined", { level_id: "1m-2m" }));
+  projection.observe(entry(2, "room_entered", { table_id: "stale-table" }));
+  projection.observe(entry(3, "room_closed", { table_id: "stale-table" }));
+  projection.observe(entry(4, "pool_join_attempt_expired", { table_id: "stale-table" }));
+
+  assert.deepEqual(
+    projection.merge([], 0).map((event) => event.event.type),
+    ["pool_joined", "pool_join_attempt_expired"],
+  );
+});
+
+test("新一手开始会淘汰上一手私有与终态事件", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "hand_protocol_started", { hand_number: 1 }));
+  projection.observe(entry(2, "hand_ready", { hand_number: 1 }));
+  projection.observe(entry(3, "receipt_finalized", { hand_number: 1 }));
+  projection.observe(entry(4, "hand_protocol_started", { hand_number: 2 }));
+
+  assert.deepEqual(
+    projection.merge([], 0).map((event) => [event.event.type, event.event.hand_number]),
+    [["hand_protocol_started", 2]],
+  );
+});

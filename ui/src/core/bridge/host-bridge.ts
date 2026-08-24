@@ -30,13 +30,14 @@ declare global {
   var __tokenHoldemLastSnapshot: unknown;
   var __tokenHoldemOfficialUsageState: unknown;
   var __tokenHoldemLastAccountBinding: unknown;
+  var __tokenHoldemCurrentState: unknown;
   var __tokenPokerUpdateStatus: unknown;
   var __tokenHoldemBufferedSidecarEvents: unknown[] | undefined;
   var __tokenHoldemMountRoot: HTMLElement | undefined;
   var __tokenHoldemPortalRoot: HTMLElement | undefined;
   var __tokenHoldemCodexMarkSource: string | undefined;
   var __tokenHoldemBootError: string | undefined;
-  var tokenHoldemCommand: ((payload: string) => void) | undefined;
+  var tokenHoldemCommand: ((payload: string) => Promise<CommandResult>) | undefined;
 }
 
 const PREVIEW_SNAPSHOT = Object.freeze({
@@ -282,8 +283,10 @@ class HostBridgeStore {
     );
     globalThis.addEventListener("token-holdem:account-binding", this.#handleAccountBinding);
     globalThis.addEventListener("token-poker:update-status", this.#handleUpdateStatus);
+    globalThis.addEventListener("token-holdem:current-state", this.#handleCurrentState);
     globalThis.addEventListener("token-holdem:sidecar", this.#handleSidecarEvent);
     globalThis.addEventListener("token-holdem:resume", this.#handleHostResume);
+    this.#applyCurrentState(globalThis.__tokenHoldemCurrentState);
     for (const rawEvent of globalThis.__tokenHoldemBufferedSidecarEvents ?? []) {
       const event = parseSidecarEvent(rawEvent);
       if (event !== null) this.#applySidecarEvent(event);
@@ -344,8 +347,26 @@ class HostBridgeStore {
       return { ok: false, error: bridgeText("bridge.hostUnavailable") };
     }
     try {
-      globalThis.tokenHoldemCommand(JSON.stringify(command));
+      void globalThis.tokenHoldemCommand(JSON.stringify(command));
       return { ok: true };
+    } catch (error: unknown) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : bridgeText("bridge.commandFailed"),
+      };
+    }
+  }
+
+  async sendConfirmed(command: HostCommand): Promise<CommandResult> {
+    if (this.#snapshot.mode === "preview") {
+      this.#runPreviewCommand(command);
+      return { ok: true };
+    }
+    if (typeof globalThis.tokenHoldemCommand !== "function") {
+      return { ok: false, error: bridgeText("bridge.hostUnavailable") };
+    }
+    try {
+      return await globalThis.tokenHoldemCommand(JSON.stringify(command));
     } catch (error: unknown) {
       return {
         ok: false,
@@ -371,6 +392,25 @@ class HostBridgeStore {
     if (officialUsage === null) return;
     this.#replace({ ...this.#snapshot, officialUsage });
   };
+
+  #handleCurrentState = (event: Event): void => {
+    if (!(event instanceof CustomEvent)) return;
+    this.#applyCurrentState(event.detail);
+  };
+
+  #applyCurrentState(value: unknown): void {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+    const identity = (value as Record<string, unknown>).identity;
+    if (identity === null) {
+      if (this.#snapshot.identity !== null) {
+        this.#replace({ ...this.#snapshot, identity: null });
+      }
+      return;
+    }
+    if (typeof identity !== "object" || Array.isArray(identity)) return;
+    const event = parseSidecarEvent({ ...identity, type: "identity_ready" });
+    if (event?.type === "identity_ready") this.#applySidecarEvent(event);
+  }
 
   #handleAccountBinding = (event: Event): void => {
     if (!(event instanceof CustomEvent)) return;
@@ -655,7 +695,6 @@ class HostBridgeStore {
       case "room_closed":
         this.#replace({
           ...this.#snapshot,
-          pool: EMPTY_POOL,
           room: EMPTY_ROOM,
           hand: EMPTY_HAND,
           friendRoomId: null,
@@ -1352,8 +1391,14 @@ class HostBridgeStore {
 
 const bridgeStore = new HostBridgeStore();
 const sendHostCommand = (command: HostCommand): CommandResult => bridgeStore.send(command);
+const sendConfirmedHostCommand = (command: HostCommand): Promise<CommandResult> =>
+  bridgeStore.sendConfirmed(command);
 
-export function useHostBridge(): readonly [BridgeSnapshot, (command: HostCommand) => CommandResult] {
+export function useHostBridge(): readonly [
+  BridgeSnapshot,
+  (command: HostCommand) => CommandResult,
+  (command: HostCommand) => Promise<CommandResult>,
+] {
   const snapshot = useSyncExternalStore(bridgeStore.subscribe, bridgeStore.getSnapshot);
-  return [snapshot, sendHostCommand] as const;
+  return [snapshot, sendHostCommand, sendConfirmedHostCommand] as const;
 }

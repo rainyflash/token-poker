@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -25,7 +25,7 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
     LOCALAPPDATA: isolatedLocalAppData,
     TOKEN_HOLDEM_RUNTIME_PATH: join(pluginRoot, "bin", "token-holdem-runtime.exe"),
     TOKEN_HOLDEM_SIDECAR_PATH: join(pluginRoot, "bin", "token-holdem-sidecar.exe"),
-    TOKEN_HOLDEM_RUNTIME_PIPE: String.raw`\\.\pipe\token-holdem-runtime-v3-${randomBytes(12).toString("hex")}`,
+    TOKEN_HOLDEM_RUNTIME_PIPE: String.raw`\\.\pipe\token-holdem-runtime-v5-${randomBytes(12).toString("hex")}`,
     TOKEN_HOLDEM_RUNTIME_IDLE_TIMEOUT_SECONDS: "30",
     TOKEN_HOLDEM_CODEX_APP_SERVER_FIXTURE: join(
       mcpRoot,
@@ -56,6 +56,7 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
     const identityCommand = await firstSession.client.callTool({
       name: "token_holdem_command",
       arguments: {
+        request_id: randomUUID(),
         command: {
           type: "ensure_identity",
           recovery_secret: "跨任务恢复测试专用口令-abcdefghijkl",
@@ -63,6 +64,7 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
         },
       },
     });
+    assert.equal(identityCommand.structuredContent?.command_result?.status, "confirmed");
     const identityEvent = await findOrWaitForRuntimeEvent(
       firstSession.client,
       identityCommand,
@@ -73,6 +75,7 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
     const poolCommand = await firstSession.client.callTool({
       name: "token_holdem_command",
       arguments: {
+        request_id: randomUUID(),
         command: {
           type: "join_public_pool",
           level_id: "1m-2m",
@@ -124,6 +127,10 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
       "string",
     );
     assert.equal(reopened.structuredContent?.account_binding?.peer_verifiable, false);
+    assert.equal(
+      reopened.structuredContent?.current_state?.identity?.player_id,
+      identityEvent.player_id,
+    );
   } finally {
     await closeMcpSession(firstSession);
     await closeMcpSession(secondSession);

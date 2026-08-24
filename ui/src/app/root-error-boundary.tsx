@@ -67,7 +67,9 @@ export class RootErrorBoundary extends Component<
           <code>{this.state.error}</code>
           <button
             type="button"
-            onClick={() => globalThis.tokenHoldemCommand?.(JSON.stringify({ type: "close_ui" }))}
+            onClick={() => {
+              void globalThis.tokenHoldemCommand?.(JSON.stringify({ type: "close_ui" }));
+            }}
           >
             {chinese ? "返回 Codex" : "Return to Codex"}
           </button>

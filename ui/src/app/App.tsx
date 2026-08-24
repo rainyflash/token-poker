@@ -20,8 +20,8 @@ export function App() {
     readonly surface: PrimarySurface;
     readonly subview: AppSubview;
   } | null>(null);
-  const [bridge, sendCommand] = useHostBridge();
-  const autoIdentity = useAutoIdentity(bridge, sendCommand);
+  const [bridge, sendCommand, sendConfirmedCommand] = useHostBridge();
+  const autoIdentity = useAutoIdentity(bridge, sendConfirmedCommand);
   const primarySurface = projectPrimarySurface(bridge);
   const activeSubview =
     subviewState?.surface === primarySurface ? subviewState.subview : null;

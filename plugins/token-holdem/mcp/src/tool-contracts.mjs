@@ -3,6 +3,9 @@ import { z } from "zod";
 const safeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const boundedText = (maximum) => z.string().trim().min(1).max(maximum);
 const address = boundedText(2_048);
+const requestId = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu);
 
 const commandVariants = [
   z
@@ -89,7 +92,7 @@ const commandVariants = [
 export const hostCommandSchema = z.discriminatedUnion("type", commandVariants);
 
 export const commandToolSchema = z
-  .object({ command: hostCommandSchema })
+  .object({ request_id: requestId, command: hostCommandSchema })
   .strict();
 
 export const pollToolSchema = z

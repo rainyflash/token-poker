@@ -105,6 +105,7 @@ export function buildHostBridge(version) {
     : [];
 
   let latestSequence = 0;
+  let eventsHydrated = false;
   let stopped = false;
   let resizeCleanup = null;
   let resizeSetupFailed = false;
@@ -245,6 +246,16 @@ export function buildHostBridge(version) {
     }));
   }
 
+  function publishCurrentState(detail) {
+    if (!detail || typeof detail !== "object" ||
+        !(detail.identity === null ||
+          (typeof detail.identity === "object" && !Array.isArray(detail.identity)))) return;
+    globalThis.__tokenHoldemCurrentState = detail;
+    globalThis.dispatchEvent(new CustomEvent("token-holdem:current-state", {
+      detail,
+    }));
+  }
+
   function publishWarning(message) {
     publishSidecarEvent({ type: "warning", message: String(message) });
   }
@@ -284,7 +295,7 @@ export function buildHostBridge(version) {
     return typeof text === "string" && text.length > 0 ? text : "Plugin tool call failed";
   }
 
-  function consumeResult(result) {
+  function consumeResult(result, eventMode = eventsHydrated ? "incremental" : "metadata") {
     if (!result || typeof result !== "object") return;
     const payload = result.structuredContent || result._meta?.widgetData;
     const officialUsageError = payload && typeof payload === "object" &&
@@ -305,12 +316,14 @@ export function buildHostBridge(version) {
     if (payload && typeof payload === "object") {
       publishAccountBinding(payload.account_binding);
       publishUpdateStatus(payload.update_status);
+      publishCurrentState(payload.current_state);
     }
     if (result.isError) {
       if (officialUsageError === null) publishWarning(resultError(result));
       return;
     }
     if (!payload || typeof payload !== "object") return;
+    if (eventMode === "metadata") return;
     if (Array.isArray(payload.events)) {
       for (const entry of payload.events) {
         if (!entry || !Number.isSafeInteger(entry.sequence) || entry.sequence <= latestSequence) continue;
@@ -322,11 +335,11 @@ export function buildHostBridge(version) {
       latestSequence = Math.max(latestSequence, payload.latest_sequence);
     }
     if (payload.history_truncated === true) {
-      publishWarning("Local event history was truncated. Continuing from the latest state; reopen the table if the UI looks stale.");
+      publishWarning("Older diagnostic events were truncated; the current identity, matchmaking, room, and hand state was restored from the retained projection.");
     }
   }
 
-  async function callTool(name, argumentsValue, timeoutMs = 30_000) {
+  async function callTool(name, argumentsValue, timeoutMs = 30_000, eventMode = "auto") {
     await app.ready;
     if (stopped) throw sessionStoppedError("Token Poker UI session already stopped");
     const callController = new AbortController();
@@ -355,7 +368,10 @@ export function buildHostBridge(version) {
         ),
         aborted,
       ]);
-      consumeResult(result);
+      consumeResult(
+        result,
+        eventMode === "auto" ? (eventsHydrated ? "incremental" : "metadata") : eventMode,
+      );
       return result;
     } finally {
       clearTimeout(timeout);
@@ -389,28 +405,89 @@ export function buildHostBridge(version) {
     }
   }
 
+  function createRequestId() {
+    if (typeof globalThis.crypto?.randomUUID === "function") {
+      return globalThis.crypto.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    if (typeof globalThis.crypto?.getRandomValues === "function") {
+      globalThis.crypto.getRandomValues(bytes);
+    } else {
+      for (let index = 0; index < bytes.length; index += 1) {
+        bytes[index] = Math.floor(Math.random() * 256);
+      }
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+    return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" +
+      hex.slice(16, 20) + "-" + hex.slice(20);
+  }
+
+  function enqueue(queueName, task) {
+    const queue = queueName === "update" ? updateQueue : commandQueue;
+    const operation = queue.then(task);
+    const continuation = operation.catch(() => undefined);
+    if (queueName === "update") updateQueue = continuation;
+    else commandQueue = continuation;
+    return operation;
+  }
+
+  function failedCommand(error) {
+    const message = errorMessage(error);
+    if (!isExpectedStop(error)) publishWarning(message);
+    return { ok: false, error: message };
+  }
+
+  async function submitCommand(command) {
+    const requestId = createRequestId();
+    const result = await callTool("token_holdem_command", {
+      request_id: requestId,
+      command,
+    });
+    const payload = result?.structuredContent || result?._meta?.widgetData;
+    const outcome = payload?.command_result;
+    if (!outcome || outcome.request_id !== requestId) {
+      throw new Error("Plugin returned a mismatched command result");
+    }
+    if (result?.isError || outcome.status === "failed") {
+      return {
+        ok: false,
+        error: typeof outcome.error === "string" && outcome.error.length > 0
+          ? outcome.error
+          : resultError(result),
+      };
+    }
+    if (command?.type === "ensure_identity" && outcome.status !== "confirmed") {
+      throw new Error("Plugin did not confirm the identity command");
+    }
+    if (outcome.status !== "accepted" && outcome.status !== "confirmed") {
+      throw new Error("Plugin returned an invalid command status");
+    }
+    return { ok: true };
+  }
+
   globalThis.tokenHoldemCommand = (payload) => {
     let command;
     try {
       command = JSON.parse(payload);
     } catch {
-      publishWarning("The table sent an invalid command");
-      return;
+      const error = "The table sent an invalid command";
+      publishWarning(error);
+      return Promise.resolve({ ok: false, error });
     }
     if (command?.type === "close_ui") {
-      app.requestTeardown({}).catch((error) => {
-        if (!isExpectedStop(error)) publishWarning(errorMessage(error));
-      });
-      return;
+      return app.requestTeardown({})
+        .then(() => ({ ok: true }))
+        .catch(failedCommand);
     }
-    if (stopped) return;
+    if (stopped) {
+      return Promise.resolve({ ok: false, error: "Token Poker UI session already stopped" });
+    }
     if (command?.type === "request_token_refresh") {
-      commandQueue = commandQueue
-        .then(refreshOfficialUsage)
-        .catch((error) => {
-          if (!isExpectedStop(error)) publishWarning(errorMessage(error));
-        });
-      return;
+      return enqueue("command", refreshOfficialUsage)
+        .then(() => ({ ok: true }))
+        .catch(failedCommand);
     }
     const updateTools = {
       check_update: ["token_holdem_check_update", "checking", 45_000],
@@ -419,14 +496,11 @@ export function buildHostBridge(version) {
     };
     if (Object.prototype.hasOwnProperty.call(updateTools, command?.type)) {
       const [toolName, pendingPhase, timeoutMs] = updateTools[command.type];
-      updateQueue = updateQueue.then(() => runUpdateTool(toolName, pendingPhase, timeoutMs));
-      return;
+      return enqueue("update", () => runUpdateTool(toolName, pendingPhase, timeoutMs))
+        .then(() => ({ ok: true }))
+        .catch(failedCommand);
     }
-    commandQueue = commandQueue
-      .then(() => callTool("token_holdem_command", { command }))
-      .catch((error) => {
-        if (!isExpectedStop(error)) publishWarning(errorMessage(error));
-      });
+    return enqueue("command", () => submitCommand(command)).catch(failedCommand);
   };
 
   function abortableDelay(delayMs) {
@@ -445,10 +519,12 @@ export function buildHostBridge(version) {
   async function pollLoop() {
     while (!stopped) {
       try {
+        const isHydrating = !eventsHydrated;
         const result = await callTool(
           "token_holdem_poll",
-          { after_sequence: latestSequence, wait_ms: 20_000 },
+          { after_sequence: isHydrating ? 0 : latestSequence, wait_ms: isHydrating ? 0 : 20_000 },
           30_000,
+          isHydrating ? "hydrate" : "incremental",
         );
         if (result?.isError) {
           const message = resultError(result);
@@ -458,6 +534,8 @@ export function buildHostBridge(version) {
             return;
           }
           await abortableDelay(1_000);
+        } else if (isHydrating) {
+          eventsHydrated = true;
         }
       } catch (error) {
         if (isExpectedStop(error)) return;

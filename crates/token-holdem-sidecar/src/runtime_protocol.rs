@@ -1,10 +1,10 @@
 use crate::{decode_command_line, SidecarCommand, MAX_COMMAND_LINE_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use thiserror::Error;
 
-pub const RUNTIME_PROTOCOL_VERSION: u16 = 4;
+pub const RUNTIME_PROTOCOL_VERSION: u16 = 5;
 const EVENT_LIMIT: usize = 4_096;
 const EVENT_BYTES_LIMIT: usize = 8 * 1_024 * 1_024;
 const WORKER_ARGUMENT_LIMIT: usize = 64;
@@ -102,6 +102,109 @@ struct StoredRuntimeEvent {
     encoded_bytes: usize,
 }
 
+#[derive(Debug, Default)]
+struct SessionEventProjection {
+    slots: BTreeMap<&'static str, RuntimeEvent>,
+}
+
+impl SessionEventProjection {
+    fn observe(&mut self, event: &RuntimeEvent) {
+        let Some(event_type) = event.event.get("type").and_then(Value::as_str) else {
+            return;
+        };
+        match event_type {
+            "identity_ready" => self.insert("identity", event),
+            "pool_joined" => {
+                self.clear_pool();
+                self.insert("pool", event);
+            }
+            "pool_directory_updated" => self.insert("pool_directory", event),
+            "pool_joining_table"
+            | "pool_join_attempt_expired"
+            | "pool_creating_table"
+            | "pool_table_joined" => self.insert("pool_phase", event),
+            "pool_cancelled" => self.clear_pool(),
+            "friend_room_created" | "friend_room_joining" | "friend_room_joined" => {
+                self.insert("friend_room", event);
+            }
+            "room_entered" => {
+                self.clear_room();
+                self.clear_hand();
+                self.insert("room_entered", event);
+            }
+            "room_snapshot" => {
+                self.insert("room_snapshot", event);
+                if event.event.get("local_role").and_then(Value::as_str) != Some("leaving") {
+                    self.slots.remove("safe_leave");
+                }
+            }
+            "membership_confirmation" => self.insert("membership", event),
+            "hand_roster_confirmation" => self.insert("roster", event),
+            "next_hand_ready" => self.insert("next_hand", event),
+            "safe_leave_requested" => self.insert("safe_leave", event),
+            "safe_leave_completed" => {
+                self.clear_pool();
+                self.clear_room();
+                self.clear_hand();
+            }
+            "room_closed" => {
+                self.clear_room();
+                self.clear_hand();
+            }
+            "hand_protocol_started" => {
+                self.clear_hand();
+                self.insert("hand_started", event);
+            }
+            "hand_protocol_progress" => self.insert("hand_progress", event),
+            "hand_ready" => self.insert("hand_ready", event),
+            "hand_state" => self.insert("hand_state", event),
+            "hand_action_conflict" | "hand_settled" => self.insert("hand_terminal", event),
+            "receipt_consensus_progress" | "receipt_finalized" => {
+                self.insert("receipt", event);
+            }
+            "hand_session_interrupted" | "hand_session_resumed" => {
+                self.insert("interruption", event);
+            }
+            "hand_left" => self.clear_hand(),
+            _ => {}
+        }
+    }
+
+    fn insert(&mut self, slot: &'static str, event: &RuntimeEvent) {
+        self.slots.insert(slot, event.clone());
+    }
+
+    fn clear(&mut self) {
+        self.slots.clear();
+    }
+
+    fn clear_pool(&mut self) {
+        self.slots.remove("pool");
+        self.slots.remove("pool_directory");
+        self.slots.remove("pool_phase");
+    }
+
+    fn clear_room(&mut self) {
+        self.slots.remove("friend_room");
+        self.slots.remove("room_entered");
+        self.slots.remove("room_snapshot");
+        self.slots.remove("membership");
+        self.slots.remove("roster");
+        self.slots.remove("next_hand");
+        self.slots.remove("safe_leave");
+    }
+
+    fn clear_hand(&mut self) {
+        self.slots.remove("hand_started");
+        self.slots.remove("hand_progress");
+        self.slots.remove("hand_ready");
+        self.slots.remove("hand_state");
+        self.slots.remove("hand_terminal");
+        self.slots.remove("receipt");
+        self.slots.remove("interruption");
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct JournalSnapshot {
     pub runtime_id: String,
@@ -120,6 +223,7 @@ pub struct EventJournal {
     latest_sequence: u64,
     encoded_bytes: usize,
     events: VecDeque<StoredRuntimeEvent>,
+    session_projection: SessionEventProjection,
     pool_active: bool,
     room_active: bool,
     hand_active: bool,
@@ -135,6 +239,7 @@ impl EventJournal {
             latest_sequence: 0,
             encoded_bytes: 0,
             events: VecDeque::new(),
+            session_projection: SessionEventProjection::default(),
             pool_active: false,
             room_active: false,
             hand_active: false,
@@ -160,6 +265,7 @@ impl EventJournal {
             sequence: self.latest_sequence,
             event,
         };
+        self.session_projection.observe(&value);
         self.events.push_back(StoredRuntimeEvent {
             value: value.clone(),
             encoded_bytes,
@@ -180,6 +286,7 @@ impl EventJournal {
         self.generation_first_sequence = self.latest_sequence.saturating_add(1);
         self.encoded_bytes = 0;
         self.events.clear();
+        self.session_projection.clear();
         self.pool_active = false;
         self.room_active = false;
         self.hand_active = false;
@@ -193,17 +300,23 @@ impl EventJournal {
             .map_or(self.latest_sequence.saturating_add(1), |entry| {
                 entry.value.sequence
             });
+        let mut replay = self
+            .session_projection
+            .slots
+            .values()
+            .cloned()
+            .map(|event| (event.sequence, event))
+            .collect::<BTreeMap<_, _>>();
+        for entry in &self.events {
+            replay.insert(entry.value.sequence, entry.value.clone());
+        }
         JournalSnapshot {
             runtime_id: self.runtime_id.clone(),
             generation: self.generation,
             latest_sequence: self.latest_sequence,
             earliest_sequence,
             history_truncated: earliest_sequence > self.generation_first_sequence,
-            events: self
-                .events
-                .iter()
-                .map(|entry| entry.value.clone())
-                .collect(),
+            events: replay.into_values().collect(),
         }
     }
 
@@ -333,7 +446,7 @@ mod tests {
     #[test]
     fn 运行时协议要求先握手并拒绝共享内核退出命令() {
         assert!(matches!(
-            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":4}"#),
+            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":5}"#),
             Ok(RuntimeClientRequest::Attach)
         ));
         assert!(matches!(
@@ -376,6 +489,90 @@ mod tests {
         assert_eq!(next.generation, 2);
         assert_eq!(next.sequence, 6);
         assert_eq!(journal.snapshot().events.len(), 1);
+    }
+
+    #[test]
+    fn 事件日志截断后仍回放当前房间与手牌投影() {
+        let mut journal = EventJournal::new("runtime-projection".to_owned());
+        journal
+            .append(serde_json::json!({
+                "type": "identity_ready",
+                "player_id": "player-a",
+                "device_public_key": "device-a"
+            }))
+            .expect("身份事件应写入");
+        journal
+            .append(serde_json::json!({
+                "type": "pool_joined",
+                "level_id": "1m-2m",
+                "buy_in": 80_000_000
+            }))
+            .expect("匹配事件应写入");
+        journal
+            .append(serde_json::json!({
+                "type": "room_entered",
+                "table_id": "table-a",
+                "level_id": "1m-2m"
+            }))
+            .expect("入桌事件应写入");
+        journal
+            .append(serde_json::json!({
+                "type": "room_snapshot",
+                "table_id": "table-a",
+                "local_role": "playing"
+            }))
+            .expect("房间快照应写入");
+        journal
+            .append(serde_json::json!({
+                "type": "hand_protocol_started",
+                "table_id": "table-a",
+                "hand_number": 9
+            }))
+            .expect("手牌启动事件应写入");
+        for index in 0..=EVENT_LIMIT {
+            journal
+                .append(serde_json::json!({"type": "warning", "message": index.to_string()}))
+                .expect("填充事件应写入");
+        }
+
+        let snapshot = journal.snapshot();
+        assert!(snapshot.history_truncated);
+        let replayed_types = snapshot
+            .events
+            .iter()
+            .filter_map(|event| event.event.get("type").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert!(replayed_types.contains(&"identity_ready"));
+        assert!(replayed_types.contains(&"pool_joined"));
+        assert!(replayed_types.contains(&"room_entered"));
+        assert!(replayed_types.contains(&"room_snapshot"));
+        assert!(replayed_types.contains(&"hand_protocol_started"));
+    }
+
+    #[test]
+    fn 关闭临时房间保留匹配而安全离桌清空投影() {
+        let mut journal = EventJournal::new("runtime-room-close".to_owned());
+        journal
+            .append(serde_json::json!({"type": "pool_joined"}))
+            .expect("匹配事件应写入");
+        journal
+            .append(serde_json::json!({"type": "room_entered"}))
+            .expect("入桌事件应写入");
+        journal
+            .append(serde_json::json!({"type": "room_closed"}))
+            .expect("关房事件应写入");
+        let projected = journal
+            .session_projection
+            .slots
+            .values()
+            .filter_map(|event| event.event.get("type").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(projected, vec!["pool_joined"]);
+
+        journal
+            .append(serde_json::json!({"type": "safe_leave_completed"}))
+            .expect("安全离桌事件应写入");
+        assert!(journal.session_projection.slots.is_empty());
     }
 
     #[test]

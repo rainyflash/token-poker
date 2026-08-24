@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,7 +20,7 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
   process.env.LOCALAPPDATA = isolatedLocalAppData;
   process.env.TOKEN_HOLDEM_RUNTIME_PATH = join(pluginRoot, "bin", "token-holdem-runtime.exe");
   process.env.TOKEN_HOLDEM_SIDECAR_PATH = join(pluginRoot, "bin", "token-holdem-sidecar.exe");
-  process.env.TOKEN_HOLDEM_RUNTIME_PIPE = String.raw`\\.\pipe\token-holdem-runtime-v3-${randomBytes(12).toString("hex")}`;
+  process.env.TOKEN_HOLDEM_RUNTIME_PIPE = String.raw`\\.\pipe\token-holdem-runtime-v5-${randomBytes(12).toString("hex")}`;
   process.env.TOKEN_HOLDEM_RUNTIME_IDLE_TIMEOUT_SECONDS = "30";
 
   let first = null;
@@ -41,6 +41,15 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
       observed_at_unix_ms: Date.now(),
     });
     await waitForEvent(first, "token_snapshot_accepted", 10_000, beforeToken);
+    const identity = await first.ensureIdentity(
+      {
+        type: "ensure_identity",
+        recovery_secret: "跨对话共享运行时测试口令-abcdefghijkl",
+        device_label: "测试设备",
+      },
+      randomUUID(),
+    );
+    assert.equal(first.currentState.identity?.player_id, identity.player_id);
     await first.close();
     first = null;
 
@@ -58,6 +67,7 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
     assert.equal(second.tokenSnapshot?.display_name, "幻光");
     assert.equal(typeof second.accountBinding?.account_fingerprint, "string");
     assert.equal(second.accountBinding?.peer_verifiable, false);
+    assert.equal(second.currentState.identity?.player_id, identity.player_id);
 
     for (let index = 0; index < 12; index += 1) {
       const cursor = second.latestSequence;
