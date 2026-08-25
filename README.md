@@ -142,6 +142,7 @@ python ./scripts/check-source-language.py
 node --test scripts/community-network.test.mjs
 node scripts/verify-volunteer-network.mjs
 node scripts/verify-p2p-hand.mjs
+node scripts/verify-p2p-hand.mjs --relay
 node scripts/verify-complete-session.mjs
 ```
 

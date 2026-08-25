@@ -93,6 +93,7 @@ jobs:
         run: |
           node scripts/verify-volunteer-network.mjs
           node scripts/verify-p2p-hand.mjs
+          node scripts/verify-p2p-hand.mjs --relay
           node scripts/verify-dynamic-table.mjs
           node scripts/verify-safe-leave.mjs
           node scripts/verify-complete-session.mjs

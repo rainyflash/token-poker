@@ -2,6 +2,20 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.13] - 2026-08-24
+
+### Fixed
+
+- Preserve the signed table-admission endpoint when moving from matchmaking into a room.
+- Deliver the initial join intent directly over the reliable request-response protocol while retaining Gossipsub as redundant propagation.
+- Retain and actively dial the admission peer until the local player appears in a signed membership proposal.
+- Remove the duplicate friend-room dial now owned by the session admission boundary.
+
+### Added
+
+- Fault-inject room-topic Gossipsub loss during the complete two-player session test.
+- Repeat the fault-injected matchmaking and complete-hand test through a Circuit Relay topology in CI.
+
 ## [0.4.12] - 2026-08-24
 
 ### Fixed
@@ -198,6 +212,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.13]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.13
 [0.4.12]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.12
 [0.4.11]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.11
 [0.4.10]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.10

@@ -228,6 +228,7 @@ struct ActiveSession {
     level: StakeLevel,
     topic: String,
     local_join: JoinIntent,
+    admission_recipient: Option<DirectRoomRecipient>,
     joins: BTreeMap<JoinClaimId, JoinIntent>,
     leaves: BTreeMap<PlayerId, LeaveIntent>,
     membership: Option<SignedMembershipProposal>,
@@ -333,7 +334,7 @@ impl TableSessionRuntime {
         )?;
         let membership_certificate =
             CertifiedMembership::assemble(signed.clone(), [acceptance], now_unix_ms)?;
-        let mut active = ActiveSession::new(table_id, creator_player_id, local_join, topic);
+        let mut active = ActiveSession::new(table_id, creator_player_id, local_join, topic, None);
         active.hand_clock_known = true;
         active.membership = Some(signed);
         active.membership_certificate = Some(membership_certificate);
@@ -354,21 +355,33 @@ impl TableSessionRuntime {
         swarm: &mut libp2p::Swarm<NetworkBehaviour>,
         table_id: TableId,
         creator_player_id: PlayerId,
+        admission_peer_id: &[u8],
+        admission_addresses: &[Vec<u8>],
         ticket: PoolTicket,
         device: &DeviceIdentity,
         certificate: DeviceCertificate,
         now_unix_ms: u64,
         now_monotonic: Instant,
     ) -> Result<Vec<TableSessionEvent>> {
+        let admission_recipient = direct_room_recipient(admission_peer_id, admission_addresses)
+            .context("牌桌接纳端点无效")?;
+        anyhow::ensure!(
+            admission_recipient.peer_id != *swarm.local_peer_id(),
+            "不能通过本机会话端点加入远端牌桌"
+        );
         let local_join = issue_join_intent(table_id, ticket, device, certificate, now_unix_ms)?;
         let topic = session_topic(table_id);
         subscribe(swarm, &topic)?;
-        self.active = Some(ActiveSession::new(
+        let mut active = ActiveSession::new(
             table_id,
             creator_player_id,
             local_join,
             topic,
-        ));
+            Some(admission_recipient),
+        );
+        active.owns_explicit_peers = true;
+        synchronize_explicit_session_peers(&mut active, swarm, now_monotonic)?;
+        self.active = Some(active);
         let active = self.active.as_ref().context("加入后的牌桌会话缺失")?;
         Ok(vec![
             TableSessionEvent::RoomEntered {
@@ -398,13 +411,9 @@ impl TableSessionRuntime {
     }
 
     pub(crate) fn local_admission_acknowledged(&self) -> bool {
-        self.active.as_ref().is_some_and(|active| {
-            active
-                .pending_membership
-                .as_ref()
-                .or(active.membership.as_ref())
-                .is_some_and(|membership| active.contains_local_player(membership.proposal()))
-        })
+        self.active
+            .as_ref()
+            .is_some_and(ActiveSession::local_admission_acknowledged)
     }
 
     pub(crate) fn advertisement(
@@ -1027,6 +1036,7 @@ impl ActiveSession {
         creator_player_id: PlayerId,
         local_join: JoinIntent,
         topic: String,
+        admission_recipient: Option<DirectRoomRecipient>,
     ) -> Self {
         let level = local_join.level().clone();
         let joins = BTreeMap::from([(local_join.claim_id(), local_join.clone())]);
@@ -1036,6 +1046,7 @@ impl ActiveSession {
             level,
             topic,
             local_join,
+            admission_recipient,
             joins,
             leaves: BTreeMap::new(),
             membership: None,
@@ -1097,6 +1108,13 @@ impl ActiveSession {
         } else {
             LocalRoomRole::Joining
         }
+    }
+
+    fn local_admission_acknowledged(&self) -> bool {
+        self.pending_membership
+            .as_ref()
+            .or(self.membership.as_ref())
+            .is_some_and(|membership| self.contains_local_player(membership.proposal()))
     }
 
     fn snapshot(&self, now_monotonic: Instant) -> Result<TableSessionEvent> {
@@ -1780,6 +1798,19 @@ fn synchronize_explicit_session_peers(
 
     let local_peer_id = *swarm.local_peer_id();
     let mut desired = BTreeMap::<PeerId, BTreeSet<Multiaddr>>::new();
+    let admission_peer_id = if active.local_admission_acknowledged() {
+        None
+    } else {
+        active
+            .admission_recipient
+            .as_ref()
+            .map(|recipient| recipient.peer_id)
+    };
+    if let Some(recipient) = active.admission_recipient.clone() {
+        if admission_peer_id == Some(recipient.peer_id) {
+            collect_explicit_recipients(&mut desired, [recipient], local_peer_id);
+        }
+    }
     for proposal in active
         .membership
         .iter()
@@ -1820,7 +1851,8 @@ fn synchronize_explicit_session_peers(
         swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
         swarm.behaviour_mut().retain_peer_connection(peer_id);
         active.explicit_peers.insert(peer_id);
-        let owns_dial = should_initiate_peer_dial(local_peer_id, peer_id);
+        let owns_dial =
+            admission_peer_id == Some(peer_id) || should_initiate_peer_dial(local_peer_id, peer_id);
         let fallback_due = active
             .disconnected_explicit_peers
             .get(&peer_id)
@@ -2147,13 +2179,25 @@ fn publish_active_messages(
                 now_monotonic.saturating_duration_since(last) >= SESSION_MESSAGE_REPUBLISH_INTERVAL
             });
     if should_publish_session_messages {
-        publish(
-            swarm,
-            &active.topic,
-            &RoomWireMessage::Session(TableSessionMessage::JoinIntent(Box::new(
-                active.local_join.clone(),
-            ))),
-        )?;
+        let join_message = RoomWireMessage::Session(TableSessionMessage::JoinIntent(Box::new(
+            active.local_join.clone(),
+        )));
+        let admission_recipients = if active.local_admission_acknowledged() {
+            Vec::new()
+        } else {
+            active.admission_recipient.clone().into_iter().collect()
+        };
+        if admission_recipients.is_empty() {
+            publish(swarm, &active.topic, &join_message)?;
+        } else {
+            deliver_consensus_message(
+                swarm,
+                active,
+                &join_message,
+                admission_recipients,
+                now_monotonic,
+            )?;
+        }
         if let Some(leave) = active.local_leave.clone() {
             let leave_recipients = active
                 .membership
@@ -2372,6 +2416,9 @@ fn publish(
     topic: &str,
     message: &RoomWireMessage,
 ) -> Result<bool> {
+    if !room_gossip_enabled() {
+        return Ok(false);
+    }
     let payload = encode_room_message(message)?;
     Ok(swarm
         .behaviour_mut()
@@ -2434,6 +2481,9 @@ fn republish_consensus_over_gossip(
     payload: Vec<u8>,
     now_monotonic: Instant,
 ) {
+    if !room_gossip_enabled() {
+        return;
+    }
     let delivery_index = active
         .consensus_gossip_deliveries
         .iter()
@@ -2467,6 +2517,17 @@ fn republish_consensus_over_gossip(
         .is_ok()
     {
         delivery.successful_attempts = delivery.successful_attempts.saturating_add(1);
+    }
+}
+
+fn room_gossip_enabled() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        std::env::var_os("TOKEN_POKER_TEST_DROP_ROOM_GOSSIP").is_none()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        true
     }
 }
 

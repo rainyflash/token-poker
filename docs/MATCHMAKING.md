@@ -62,6 +62,8 @@ Gossipsub is eventually consistent, not a total-order log. Partitions and races 
 
 ## Verification
 
-`node scripts/verify-p2p-hand.mjs` starts a real Rendezvous sidecar and two player sidecars that do not know each other's address. It verifies signed discovery, deterministic proposal takeover, two device acceptances, identical table IDs, distinct seats, and handoff into the continuous table session.
+`node scripts/verify-p2p-hand.mjs` starts a real Rendezvous sidecar and two player sidecars that do not know each other's address. The guest deliberately drops all room-topic Gossipsub publications, so admission must use the signed request-response path instead of succeeding by accident through eventual gossip. The test verifies discovery, reliable admission, identical table IDs, distinct seats, and a complete hand.
+
+`node scripts/verify-p2p-hand.mjs --relay` repeats the same fault-injected session with both players reserving a Circuit Relay path. It verifies that matchmaking survives NAT-style relay topology while direct connection upgrades remain optional.
 
 `node scripts/verify-complete-session.mjs` covers private-room membership and complete hands. `node scripts/verify-volunteer-network.mjs` covers Relay v2 reservations, service limits, Rendezvous registration, and stable PeerId recovery.

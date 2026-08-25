@@ -6,18 +6,20 @@ import { fileURLToPath } from "node:url";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
 const sidecarPath = join(projectRoot, "target", "debug", "token-holdem-sidecar.exe");
+const relayVerification = process.argv.includes("--relay");
 
 class SidecarProbe {
   #buffer = "";
   #errors = "";
   #events = [];
 
-  constructor(label, argumentsList = []) {
+  constructor(label, argumentsList = [], environment = {}) {
     this.label = label;
     this.process = spawn(sidecarPath, argumentsList, {
       cwd: projectRoot,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      env: { ...process.env, ...environment },
     });
     this.process.stdout.setEncoding("utf8");
     this.process.stderr.setEncoding("utf8");
@@ -78,9 +80,23 @@ class SidecarProbe {
 
 async function main() {
   await access(sidecarPath);
-  const discovery = new SidecarProbe("社区发现端", ["--rendezvous-server"]);
+  const discoveryArguments = relayVerification
+    ? [
+        "--rendezvous-server",
+        "--relay-server",
+        "--public-node",
+        "--volunteer-consent=granted",
+        "--network-cost=unmetered",
+        "--power-source=ac",
+        "--relay-max-circuits=8",
+        "--relay-max-circuits-per-peer=4",
+      ]
+    : ["--rendezvous-server"];
+  const discovery = new SidecarProbe("社区发现端", discoveryArguments);
   const host = new SidecarProbe("主端");
-  const guest = new SidecarProbe("访客端");
+  const guest = new SidecarProbe("访客端", [], {
+    TOKEN_POKER_TEST_DROP_ROOM_GOSSIP: "1",
+  });
 
   try {
     await Promise.all([
@@ -116,8 +132,24 @@ async function main() {
     await waitForBoth(host, guest, "identity_ready", 20_000);
 
     const discoveryAddress = dialableAddress(discovery);
+    if (relayVerification) {
+      discovery.send({
+        type: "add_external_address",
+        address: publishableLocalAddress(discovery),
+      });
+      await waitFor(discovery, "advertised_address_added", 10_000);
+    }
     for (const player of [host, guest]) {
-      player.send({ type: "add_external_address", address: publishableLocalAddress(player) });
+      if (relayVerification) {
+        player.send({ type: "use_relay", address: discoveryAddress });
+      } else {
+        player.send({ type: "add_external_address", address: publishableLocalAddress(player) });
+      }
+    }
+    if (relayVerification) {
+      await waitForBoth(host, guest, "relay_reservation_accepted", 30_000);
+    }
+    for (const player of [host, guest]) {
       player.send({
         type: "configure_discovery",
         addresses: [discoveryAddress],
@@ -158,7 +190,30 @@ async function main() {
       "动态牌桌给两名玩家分配了重复席位",
     );
 
-    await discovery.stop();
+    if (relayVerification) {
+      assert(
+        [host, guest].some(
+          (player) =>
+            player.latestWhere(
+              "relay_circuit_established",
+              (event) => event.direction === "inbound",
+            ) !== null,
+        ),
+        "双端均未接受 Circuit Relay 连接",
+      );
+      assert(
+        [host, guest].some(
+          (player) =>
+            player.latestWhere(
+              "relay_circuit_established",
+              (event) => event.direction === "outbound",
+            ) !== null,
+        ),
+        "双端均未建立出站 Circuit Relay 连接",
+      );
+    }
+
+    if (!relayVerification) await discovery.stop();
 
     await waitForBoth(host, guest, "hand_ready", 75_000);
     await waitForBoth(host, guest, "hand_state", 20_000);
@@ -272,7 +327,8 @@ async function main() {
         checkpoints: {
           matched: true,
           rendezvousDiscovery: true,
-          rendezvousOfflineDuringHand: true,
+          rendezvousOfflineDuringHand: !relayVerification,
+          circuitRelayEstablished: relayVerification,
           keyExchange: host.count("hand_protocol_progress") > 0,
           privateDeal: true,
           dealBarrier: true,

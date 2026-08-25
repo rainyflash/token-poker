@@ -703,16 +703,24 @@ fn process_pool_decision(
             now_unix_ms,
             now_monotonic,
         )?,
-        PoolDecision::Join(advertisement) => state.session.join(
-            swarm,
-            advertisement.table_id(),
-            advertisement.creator_player_id(),
-            ticket,
-            &identity.device,
-            identity.certificate.clone(),
-            now_unix_ms,
-            now_monotonic,
-        )?,
+        PoolDecision::Join(advertisement) => {
+            let admission_peer_id = PeerId::from_bytes(advertisement.admission_peer_id())
+                .context("牌桌广告的接纳 PeerId 无效")?;
+            let events = state.session.join(
+                swarm,
+                advertisement.table_id(),
+                advertisement.creator_player_id(),
+                advertisement.admission_peer_id(),
+                advertisement.admission_addresses(),
+                ticket,
+                &identity.device,
+                identity.certificate.clone(),
+                now_unix_ms,
+                now_monotonic,
+            )?;
+            state.pool.transfer_explicit_peer(admission_peer_id);
+            events
+        }
     };
     process_table_session_events(swarm, state, events)
 }
@@ -892,11 +900,6 @@ fn join_friend_room(
 
     let host_peer_id = PeerId::from_bytes(invite.host_session_peer_id())
         .context("好友房邀请中的房主 PeerId 无效")?;
-    let addresses = invite
-        .host_session_addresses()
-        .iter()
-        .map(|raw| address_without_trailing_peer(raw, host_peer_id))
-        .collect::<Result<Vec<_>>>()?;
     let table_id = invite.room_id();
     let room_id = table_id.to_string();
     let session_addresses = collect_session_addresses(swarm, state)?;
@@ -918,6 +921,8 @@ fn join_friend_room(
         swarm,
         table_id,
         invite.host_player_id(),
+        invite.host_session_peer_id(),
+        invite.host_session_addresses(),
         ticket,
         &identity.device,
         identity.certificate.clone(),
@@ -934,14 +939,6 @@ fn join_friend_room(
         return Ok(());
     }
 
-    swarm
-        .dial(
-            DialOpts::peer_id(host_peer_id)
-                .condition(PeerCondition::Disconnected)
-                .addresses(addresses)
-                .build(),
-        )
-        .context("无法发起好友房 P2P 连接")?;
     state.pending_room_joins.insert(
         host_peer_id,
         PendingRoomJoin {
@@ -1519,14 +1516,6 @@ fn collect_session_addresses(
         anyhow::bail!("当前没有可写入邀请的拨号地址；请等待监听地址或 Circuit Relay 保留就绪");
     }
     Ok(result)
-}
-
-fn address_without_trailing_peer(raw: &[u8], expected_peer_id: PeerId) -> Result<Multiaddr> {
-    let mut address = Multiaddr::try_from(raw.to_vec()).context("好友房拨号地址无效")?;
-    match address.pop() {
-        Some(Protocol::P2p(peer_id)) if peer_id == expected_peer_id => Ok(address),
-        _ => anyhow::bail!("好友房拨号地址没有以房主 PeerId 结尾"),
-    }
 }
 
 fn strip_trailing_peer(mut address: Multiaddr, expected_peer_id: PeerId) -> Result<Multiaddr> {

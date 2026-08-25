@@ -251,6 +251,12 @@ impl TablePoolRuntime {
         Ok(())
     }
 
+    pub(crate) fn transfer_explicit_peer(&mut self, peer_id: PeerId) {
+        if let Some(active) = self.active.as_mut() {
+            active.explicit_peers.remove(&peer_id);
+        }
+    }
+
     pub(crate) fn cancel(
         &mut self,
         swarm: &mut libp2p::Swarm<NetworkBehaviour>,
