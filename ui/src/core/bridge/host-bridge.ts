@@ -17,6 +17,15 @@ import {
   parseTokenSnapshot,
   parseUpdateStatus,
 } from "./guards";
+import {
+  isCurrentHand,
+  phaseAfterHandReady,
+  phaseAfterHandState,
+  shouldAcceptHandProgress,
+  shouldAcceptHandReady,
+  shouldAcceptHandStart,
+  shouldAcceptHandState,
+} from "./hand-event-policy";
 import { findStakeLevel } from "../domain/stake-levels";
 import {
   readStoredLanguage,
@@ -710,6 +719,7 @@ class HostBridgeStore {
         });
         break;
       case "hand_protocol_started":
+        if (!shouldAcceptHandStart(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
@@ -730,6 +740,7 @@ class HostBridgeStore {
         });
         break;
       case "hand_protocol_progress":
+        if (!shouldAcceptHandProgress(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
@@ -743,11 +754,12 @@ class HostBridgeStore {
         });
         break;
       case "hand_ready":
+        if (!shouldAcceptHandReady(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
             ...this.#snapshot.hand,
-            phase: "playing",
+            phase: phaseAfterHandReady(this.#snapshot.hand.phase),
             tableId: event.table_id,
             handNumber: event.hand_number,
             localSeat: event.seat,
@@ -758,11 +770,15 @@ class HostBridgeStore {
         });
         break;
       case "hand_state":
+        if (!shouldAcceptHandState(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
             ...this.#snapshot.hand,
-            phase: event.awaiting_reveal ? "revealing" : "playing",
+            phase: phaseAfterHandState(
+              this.#snapshot.hand.phase,
+              event.awaiting_reveal,
+            ),
             tableId: event.table_id,
             handNumber: event.hand_number,
             localSeat: event.local_seat,
@@ -793,6 +809,7 @@ class HostBridgeStore {
         });
         break;
       case "hand_action_conflict":
+        if (!isCurrentHand(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
@@ -809,6 +826,7 @@ class HostBridgeStore {
         });
         break;
       case "hand_settled":
+        if (!isCurrentHand(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
@@ -830,6 +848,7 @@ class HostBridgeStore {
         });
         break;
       case "receipt_consensus_progress":
+        if (!isCurrentHand(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
@@ -843,6 +862,7 @@ class HostBridgeStore {
         });
         break;
       case "receipt_finalized":
+        if (!isCurrentHand(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
@@ -857,6 +877,7 @@ class HostBridgeStore {
         });
         break;
       case "hand_session_interrupted":
+        if (!isCurrentHand(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {
@@ -870,6 +891,7 @@ class HostBridgeStore {
         });
         break;
       case "hand_session_resumed":
+        if (!isCurrentHand(this.#snapshot.hand, event)) break;
         this.#replace({
           ...this.#snapshot,
           hand: {

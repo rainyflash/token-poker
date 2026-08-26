@@ -2,6 +2,18 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.15] - 2026-08-26
+
+### Fixed
+
+- Make the UI hand state monotonic, so delayed key-exchange, shuffle, or private-deal progress can no longer replace an already playable betting state.
+- Keep the shared-runtime and MCP recovery projections on the newest hand and discard stale protocol progress after private cards or betting state become authoritative.
+- Accept signed settlement receipts within a bounded sixty-second clock-skew window, preventing millisecond-level differences between player devices from freezing receipt consensus and the next hand.
+
+### Added
+
+- Add regression coverage for out-of-order hand events, stale previous-hand events, same-sequence betting-state enrichment, and bounded receipt clock skew.
+
 ## [0.4.14] - 2026-08-26
 
 ### Fixed

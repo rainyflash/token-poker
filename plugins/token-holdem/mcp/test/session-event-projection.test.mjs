@@ -109,3 +109,62 @@ test("强制安全离桌完成后清空匹配房间与手牌投影", () => {
 
   assert.deepEqual(projection.merge([], 0), []);
 });
+
+test("下注态建立后迟到的旧协议阶段不会进入恢复投影", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "hand_protocol_started", {
+    table_id: "table-a",
+    hand_number: 3,
+  }));
+  projection.observe(entry(2, "hand_protocol_progress", {
+    table_id: "table-a",
+    hand_number: 3,
+    phase: "dealing",
+    completed: 1,
+  }));
+  projection.observe(entry(3, "hand_ready", {
+    table_id: "table-a",
+    hand_number: 3,
+  }));
+  projection.observe(entry(4, "hand_state", {
+    table_id: "table-a",
+    hand_number: 3,
+    sequence: 0,
+  }));
+  projection.observe(entry(5, "hand_protocol_progress", {
+    table_id: "table-a",
+    hand_number: 3,
+    phase: "key_exchange",
+    completed: 2,
+  }));
+
+  assert.deepEqual(
+    projection.merge([], 0).map((event) => event.event.type),
+    ["hand_protocol_started", "hand_ready", "hand_state"],
+  );
+});
+
+test("上一手的迟到事件不会清空当前手牌投影", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "hand_protocol_started", {
+    table_id: "table-a",
+    hand_number: 7,
+  }));
+  projection.observe(entry(2, "hand_state", {
+    table_id: "table-a",
+    hand_number: 7,
+    sequence: 4,
+  }));
+  projection.observe(entry(3, "hand_protocol_started", {
+    table_id: "table-a",
+    hand_number: 6,
+  }));
+
+  assert.deepEqual(
+    projection.merge([], 0).map((event) => [event.event.type, event.event.hand_number]),
+    [
+      ["hand_protocol_started", 7],
+      ["hand_state", 7],
+    ],
+  );
+});

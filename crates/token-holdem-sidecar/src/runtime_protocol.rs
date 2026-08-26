@@ -152,18 +152,44 @@ impl SessionEventProjection {
                 self.clear_hand();
             }
             "hand_protocol_started" => {
+                if !self.should_replace_hand(event) {
+                    return;
+                }
                 self.clear_hand();
                 self.insert("hand_started", event);
             }
-            "hand_protocol_progress" => self.insert("hand_progress", event),
-            "hand_ready" => self.insert("hand_ready", event),
-            "hand_state" => self.insert("hand_state", event),
-            "hand_action_conflict" | "hand_settled" => self.insert("hand_terminal", event),
+            "hand_protocol_progress" => {
+                if self.should_store_hand_progress(event) {
+                    self.insert("hand_progress", event);
+                }
+            }
+            "hand_ready" => {
+                if self.belongs_to_projected_hand(event) {
+                    self.slots.remove("hand_progress");
+                    self.insert("hand_ready", event);
+                }
+            }
+            "hand_state" => {
+                if self.belongs_to_projected_hand(event) {
+                    self.slots.remove("hand_progress");
+                    self.insert("hand_state", event);
+                }
+            }
+            "hand_action_conflict" | "hand_settled" => {
+                if self.belongs_to_projected_hand(event) {
+                    self.slots.remove("hand_progress");
+                    self.insert("hand_terminal", event);
+                }
+            }
             "receipt_consensus_progress" | "receipt_finalized" => {
-                self.insert("receipt", event);
+                if self.belongs_to_projected_hand(event) {
+                    self.insert("receipt", event);
+                }
             }
             "hand_session_interrupted" | "hand_session_resumed" => {
-                self.insert("interruption", event);
+                if self.belongs_to_projected_hand(event) {
+                    self.insert("interruption", event);
+                }
             }
             "hand_left" | "hand_aborted_for_leave" => self.clear_hand(),
             _ => {}
@@ -172,6 +198,72 @@ impl SessionEventProjection {
 
     fn insert(&mut self, slot: &'static str, event: &RuntimeEvent) {
         self.slots.insert(slot, event.clone());
+    }
+
+    fn should_replace_hand(&self, event: &RuntimeEvent) -> bool {
+        let Some(current) = self.slots.get("hand_started") else {
+            return true;
+        };
+        let (Some((current_table, current_hand)), Some((incoming_table, incoming_hand))) =
+            (hand_scope(current), hand_scope(event))
+        else {
+            return true;
+        };
+        current_table == incoming_table && incoming_hand > current_hand
+    }
+
+    fn belongs_to_projected_hand(&self, event: &RuntimeEvent) -> bool {
+        let Some(started) = self.slots.get("hand_started") else {
+            return true;
+        };
+        match (hand_scope(started), hand_scope(event)) {
+            (Some(left), Some(right)) => left == right,
+            _ => true,
+        }
+    }
+
+    fn should_store_hand_progress(&self, event: &RuntimeEvent) -> bool {
+        if !self.belongs_to_projected_hand(event) {
+            return false;
+        }
+        if let Some(scope) = hand_scope(event) {
+            for slot in ["hand_ready", "hand_state", "hand_terminal"] {
+                if self
+                    .slots
+                    .get(slot)
+                    .and_then(hand_scope)
+                    .is_some_and(|projected| projected == scope)
+                {
+                    return false;
+                }
+            }
+        }
+        let Some(current) = self.slots.get("hand_progress") else {
+            return true;
+        };
+        if hand_scope(current) != hand_scope(event) {
+            return true;
+        }
+        let Some(current_order) = hand_progress_order(current) else {
+            return true;
+        };
+        let Some(incoming_order) = hand_progress_order(event) else {
+            return true;
+        };
+        if incoming_order < current_order {
+            return false;
+        }
+        incoming_order != current_order
+            || event
+                .event
+                .get("completed")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                >= current
+                    .event
+                    .get("completed")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default()
     }
 
     fn clear(&mut self) {
@@ -202,6 +294,22 @@ impl SessionEventProjection {
         self.slots.remove("hand_terminal");
         self.slots.remove("receipt");
         self.slots.remove("interruption");
+    }
+}
+
+fn hand_scope(event: &RuntimeEvent) -> Option<(&str, u64)> {
+    Some((
+        event.event.get("table_id")?.as_str()?,
+        event.event.get("hand_number")?.as_u64()?,
+    ))
+}
+
+fn hand_progress_order(event: &RuntimeEvent) -> Option<u8> {
+    match event.event.get("phase")?.as_str()? {
+        "key_exchange" => Some(0),
+        "shuffling" => Some(1),
+        "dealing" => Some(2),
+        _ => None,
     }
 }
 
@@ -610,6 +718,62 @@ mod tests {
         assert!(projected.contains(&"room_entered"));
         assert!(projected.contains(&"room_snapshot"));
         assert!(!projected.contains(&"hand_protocol_started"));
+    }
+
+    #[test]
+    fn 下注态建立后恢复投影不会回退到迟到的协议阶段() {
+        let mut journal = EventJournal::new("runtime-monotonic-hand".to_owned());
+        journal
+            .append(serde_json::json!({
+                "type": "hand_protocol_started",
+                "table_id": "table-a",
+                "hand_number": 3
+            }))
+            .expect("手牌启动事件应写入");
+        journal
+            .append(serde_json::json!({
+                "type": "hand_protocol_progress",
+                "table_id": "table-a",
+                "hand_number": 3,
+                "phase": "dealing",
+                "completed": 1
+            }))
+            .expect("发牌进度应写入");
+        journal
+            .append(serde_json::json!({
+                "type": "hand_ready",
+                "table_id": "table-a",
+                "hand_number": 3
+            }))
+            .expect("私牌就绪事件应写入");
+        journal
+            .append(serde_json::json!({
+                "type": "hand_state",
+                "table_id": "table-a",
+                "hand_number": 3,
+                "sequence": 0
+            }))
+            .expect("下注状态应写入");
+        journal
+            .append(serde_json::json!({
+                "type": "hand_protocol_progress",
+                "table_id": "table-a",
+                "hand_number": 3,
+                "phase": "key_exchange",
+                "completed": 2
+            }))
+            .expect("迟到事件仍应保留为诊断历史");
+
+        let projected = journal
+            .session_projection
+            .slots
+            .values()
+            .filter_map(|event| event.event.get("type").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            projected,
+            vec!["hand_ready", "hand_protocol_started", "hand_state"]
+        );
     }
 
     #[test]

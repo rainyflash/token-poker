@@ -5,6 +5,7 @@ use thiserror::Error;
 use token_holdem_domain::{DevicePublicKey, HandReceipt, PlayerId, ReceiptError};
 
 const RECEIPT_SIGNATURE_DOMAIN: &[u8] = b"token-holdem/receipt-signature/v1\0";
+const MAX_RECEIPT_FUTURE_SKEW_MS: u64 = 60_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantSignature {
@@ -72,7 +73,7 @@ fn validate_receipt_time(
     receipt: &HandReceipt,
     now_unix_ms: u64,
 ) -> Result<(), SignedReceiptError> {
-    if receipt.settled_at_unix_ms() > now_unix_ms {
+    if receipt.settled_at_unix_ms() > now_unix_ms.saturating_add(MAX_RECEIPT_FUTURE_SKEW_MS) {
         return Err(SignedReceiptError::ReceiptFromFuture {
             settled_at: receipt.settled_at_unix_ms(),
             now: now_unix_ms,
@@ -204,5 +205,33 @@ mod tests {
         };
 
         assert!(signed.verify(5_000).is_ok());
+        assert!(validate_receipt_time(&receipt, 4_992).is_ok());
+
+        let far_future_receipt = HandReceipt::settle(
+            MatchId::new([3; 16]),
+            2,
+            "10k-20k",
+            TranscriptHash::new([4; 32]),
+            65_001,
+            vec![
+                HandOutcome {
+                    player_id: root_a.player_id(),
+                    device_public_key: device_a.public_key(),
+                    starting_stack: Chips::new(1_000_000),
+                    ending_stack: Chips::new(1_300_000),
+                },
+                HandOutcome {
+                    player_id: root_b.player_id(),
+                    device_public_key: device_b.public_key(),
+                    starting_stack: Chips::new(1_000_000),
+                    ending_stack: Chips::new(700_000),
+                },
+            ],
+        )
+        .expect("未来凭证结构本身应当有效");
+        assert!(matches!(
+            validate_receipt_time(&far_future_receipt, 5_000),
+            Err(SignedReceiptError::ReceiptFromFuture { .. })
+        ));
     }
 }

@@ -44,6 +44,8 @@ Local cleanup is bounded: a stalled hand may close after ten seconds, membership
 
 Every peer deterministically constructs the same `HandReceipt` from the table ID, hand number, stake, combined transcript digest, settlement time, and zero-sum result. A device signs only the exact receipt that includes its own player ID, public key, and valid certificate.
 
+The settlement time comes from the final signed action. Receipt verification permits at most sixty seconds of positive wall-clock skew so ordinary device clock differences cannot deadlock consensus. The signed timestamp remains part of the receipt identity, certificate validity is checked at that timestamp, and receipts farther in the future are rejected.
+
 After all signatures produce one `CoSignedReceipt`, each seat broadcasts `NextHandReady`. Only after the full barrier and with no disconnected member does the table:
 
 1. increment `hand_number`;
