@@ -20,5 +20,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn output_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join("test-vectors/protocol-10/core.json")
+        .join("test-vectors/protocol-11/core.json")
 }

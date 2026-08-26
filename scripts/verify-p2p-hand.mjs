@@ -93,8 +93,11 @@ async function main() {
       ]
     : ["--rendezvous-server"];
   const discovery = new SidecarProbe("社区发现端", discoveryArguments);
-  const host = new SidecarProbe("主端");
+  const host = new SidecarProbe("主端", [], {
+    TOKEN_POKER_TEST_DROP_POOL_GOSSIP: "1",
+  });
   const guest = new SidecarProbe("访客端", [], {
+    TOKEN_POKER_TEST_DROP_POOL_GOSSIP: "1",
     TOKEN_POKER_TEST_DROP_ROOM_GOSSIP: "1",
   });
 
@@ -188,6 +191,15 @@ async function main() {
     assert(
       new Set(hostRoom.seats.map((seat) => seat.physical_seat)).size === 2,
       "动态牌桌给两名玩家分配了重复席位",
+    );
+    assert(
+      host.latest("pool_ticket_published")?.published_to_mesh === false &&
+        guest.latest("pool_ticket_published")?.published_to_mesh === false,
+      "测试没有真正关闭匹配池 Gossip，无法证明可靠目录同步独立工作",
+    );
+    assert(
+      host.count("pool_directory_updated") < 20 && guest.count("pool_directory_updated") < 20,
+      "匹配池重复发送了没有变化的目录状态",
     );
 
     if (relayVerification) {
@@ -326,6 +338,7 @@ async function main() {
         outcomes: hostSettlement.outcomes,
         checkpoints: {
           matched: true,
+          directPoolSyncWithoutGossip: true,
           rendezvousDiscovery: true,
           rendezvousOfflineDuringHand: !relayVerification,
           circuitRelayEstablished: relayVerification,

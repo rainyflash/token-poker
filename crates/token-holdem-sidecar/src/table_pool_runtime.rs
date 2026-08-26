@@ -3,20 +3,21 @@ use anyhow::{Context, Result};
 use libp2p::{
     gossipsub,
     multiaddr::Protocol,
+    request_response::OutboundRequestId,
     swarm::dial_opts::{DialOpts, PeerCondition},
     Multiaddr, PeerId,
 };
 use rand_core::{OsRng, RngCore};
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     time::{Duration, Instant},
 };
 use token_holdem_domain::{Chips, PlayerId, StakeLevel, TableId, TableLifecycle};
 use token_holdem_identity::{DeviceCertificate, DeviceIdentity};
 use token_holdem_network::{
-    rank_pool_tickets, select_table_advertisement, NetworkBehaviour, PoolTicket, PoolTicketId,
-    TableAdvertisement, TablePoolMessage,
+    rank_pool_tickets, select_table_advertisement, ControlRequest, ControlResponse,
+    NetworkBehaviour, PoolTicket, PoolTicketId, TableAdvertisement, TablePoolMessage,
 };
 
 pub(crate) const POOL_TICK_INTERVAL: Duration = Duration::from_millis(500);
@@ -25,12 +26,15 @@ const ADVERTISEMENT_LIFETIME_MS: u64 = 20_000;
 const TICKET_RENEWAL_MARGIN_MS: u64 = 5 * 60 * 1_000;
 const TICKET_REPUBLISH_INTERVAL: Duration = Duration::from_secs(5);
 const ADVERTISEMENT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(5);
+const DIRECT_SYNC_INTERVAL: Duration = Duration::from_secs(5);
 const FIRST_CREATOR_DELAY: Duration = Duration::from_secs(4);
 const CREATOR_FALLBACK_INTERVAL: Duration = Duration::from_secs(2);
 const JOIN_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_MESSAGE_BYTES: usize = 128 * 1_024;
 const MAX_TICKETS: usize = 256;
 const MAX_ADVERTISEMENTS: usize = 128;
+const MAX_DIRECT_SYNC_MESSAGES: usize = 2;
+const MAX_DIRECT_SYNC_PEERS: usize = 64;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -65,6 +69,8 @@ pub(crate) enum TablePoolEvent {
     TableJoined { table_id: String },
     #[serde(rename = "pool_cancelled")]
     Cancelled,
+    #[serde(rename = "warning")]
+    Warning { message: String },
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +107,18 @@ enum PoolPhase {
     InRoom,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DirectSyncStamp {
+    message_hash: [u8; 32],
+    sent_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PoolMessageTransport {
+    Gossip,
+    Direct,
+}
+
 struct ActivePool {
     topic: String,
     local_ticket: PoolTicket,
@@ -113,6 +131,10 @@ struct ActivePool {
     local_advertisement: Option<LocalTableAdvertisement>,
     last_ticket_published_at: Option<Instant>,
     last_advertisement_published_at: Option<Instant>,
+    pending_direct_syncs: HashMap<OutboundRequestId, PeerId>,
+    direct_sync_stamps: BTreeMap<PeerId, DirectSyncStamp>,
+    identity_conflict_peers: BTreeSet<PeerId>,
+    last_reported_directory: Option<(u16, u16)>,
 }
 
 #[derive(Default)]
@@ -176,6 +198,10 @@ impl TablePoolRuntime {
             local_advertisement: None,
             last_ticket_published_at: None,
             last_advertisement_published_at: None,
+            pending_direct_syncs: HashMap::new(),
+            direct_sync_stamps: BTreeMap::new(),
+            identity_conflict_peers: BTreeSet::new(),
+            last_reported_directory: None,
         });
         Ok(vec![TablePoolEvent::Joined {
             topic,
@@ -280,6 +306,7 @@ impl TablePoolRuntime {
     pub(crate) fn tick(
         &mut self,
         swarm: &mut libp2p::Swarm<NetworkBehaviour>,
+        direct_sync_peers: &[PeerId],
         session_addresses: &[Multiaddr],
         device: &DeviceIdentity,
         certificate: &DeviceCertificate,
@@ -368,6 +395,8 @@ impl TablePoolRuntime {
             }
         }
 
+        schedule_direct_sync(active, swarm, direct_sync_peers, now_monotonic)?;
+
         let timed_out_table = match active.phase {
             PoolPhase::Joining {
                 table_id,
@@ -413,10 +442,7 @@ impl TablePoolRuntime {
                 }
             }
         }
-        events.push(TablePoolEvent::DirectoryUpdated {
-            discovered_tables: u16::try_from(active.advertisements.len()).unwrap_or(u16::MAX),
-            waiting_players: u16::try_from(active.tickets.len()).unwrap_or(u16::MAX),
-        });
+        push_directory_event_if_changed(active, now_unix_ms, &mut events);
         Ok((events, decision))
     }
 
@@ -432,60 +458,206 @@ impl TablePoolRuntime {
         }
         let message: TablePoolMessage =
             cbor4ii::serde::from_slice(payload).context("公开牌桌池消息不是合法 CBOR")?;
-        match message {
-            TablePoolMessage::Ticket(ticket) => {
-                ticket.verify_at(now_unix_ms)?;
-                verify_source(source, ticket.session_peer_id())?;
-                if ticket.level() != active.local_ticket.level() {
-                    anyhow::bail!("公开池票据的牌局级别与当前池不一致")
-                }
-                let ticket_id = ticket.id();
-                if active.tickets.len() >= MAX_TICKETS && !active.tickets.contains_key(&ticket_id) {
-                    anyhow::bail!("公开池票据缓存达到 {MAX_TICKETS} 张上限")
-                }
-                let is_new_ticket = !active.tickets.contains_key(&ticket_id);
-                active.tickets.insert(ticket_id, ticket);
-                if is_new_ticket
-                    && active
-                        .local_advertisement
-                        .as_ref()
-                        .is_some_and(|advertisement| {
-                            advertisement.lifecycle != TableLifecycle::Closing
-                                && advertisement.member_count < token_holdem_domain::TABLE_CAPACITY
-                        })
-                {
-                    // When a candidate appears, an existing table with capacity
-                    // responds on the next 500 ms tick instead of waiting for its
-                    // lease renewal. This avoids split creation without chatty ads.
-                    active.last_advertisement_published_at = None;
-                }
+        let mut events = Vec::new();
+        merge_pool_message(
+            active,
+            source,
+            message,
+            now_unix_ms,
+            PoolMessageTransport::Gossip,
+            &mut events,
+        )?;
+        push_directory_event_if_changed(active, now_unix_ms, &mut events);
+        Ok(events)
+    }
+
+    pub(crate) fn handle_direct_request(
+        &mut self,
+        source: PeerId,
+        messages: Vec<TablePoolMessage>,
+        now_unix_ms: u64,
+    ) -> Result<(Vec<TablePoolEvent>, Vec<TablePoolMessage>)> {
+        let Some(active) = self.active.as_mut() else {
+            return Ok((Vec::new(), Vec::new()));
+        };
+        let mut events = Vec::new();
+        merge_direct_messages(active, source, messages, now_unix_ms, &mut events)?;
+        push_directory_event_if_changed(active, now_unix_ms, &mut events);
+        Ok((events, local_directory_messages(active)))
+    }
+
+    pub(crate) fn owns_direct_request(&self, request_id: OutboundRequestId) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.pending_direct_syncs.contains_key(&request_id))
+    }
+
+    pub(crate) fn handle_direct_response(
+        &mut self,
+        request_id: OutboundRequestId,
+        source: PeerId,
+        response: ControlResponse,
+        now_unix_ms: u64,
+    ) -> Result<Vec<TablePoolEvent>> {
+        let active = self
+            .active
+            .as_mut()
+            .context("公开池可靠同步响应到达时匹配已取消")?;
+        let expected = active
+            .pending_direct_syncs
+            .remove(&request_id)
+            .context("公开池可靠同步响应没有对应请求")?;
+        anyhow::ensure!(source == expected, "公开池可靠同步响应来自错误 PeerId");
+
+        let mut events = Vec::new();
+        match response {
+            ControlResponse::TablePoolSync(messages) => {
+                merge_direct_messages(active, source, messages, now_unix_ms, &mut events)?;
             }
-            TablePoolMessage::Advertisement(advertisement) => {
-                advertisement.verify_at(now_unix_ms)?;
-                verify_source(source, advertisement.admission_peer_id())?;
-                if advertisement.level() != active.local_ticket.level() {
-                    anyhow::bail!("牌桌广告的牌局级别与当前池不一致")
+            ControlResponse::Rejected { reason } => events.push(TablePoolEvent::Warning {
+                message: format!("对手拒绝了匹配池目录同步：{reason}"),
+            }),
+            _ => events.push(TablePoolEvent::Warning {
+                message: "对手返回了错误的匹配池目录响应".to_owned(),
+            }),
+        }
+        push_directory_event_if_changed(active, now_unix_ms, &mut events);
+        Ok(events)
+    }
+
+    pub(crate) fn handle_direct_failure(&mut self, request_id: OutboundRequestId) -> bool {
+        self.active
+            .as_mut()
+            .and_then(|active| active.pending_direct_syncs.remove(&request_id))
+            .is_some()
+    }
+}
+
+fn merge_direct_messages(
+    active: &mut ActivePool,
+    source: PeerId,
+    messages: Vec<TablePoolMessage>,
+    now_unix_ms: u64,
+    events: &mut Vec<TablePoolEvent>,
+) -> Result<()> {
+    anyhow::ensure!(
+        messages.len() <= MAX_DIRECT_SYNC_MESSAGES,
+        "匹配池可靠同步消息超过 {MAX_DIRECT_SYNC_MESSAGES} 条上限"
+    );
+    for message in messages {
+        merge_pool_message(
+            active,
+            Some(source),
+            message,
+            now_unix_ms,
+            PoolMessageTransport::Direct,
+            events,
+        )?;
+    }
+    Ok(())
+}
+
+fn merge_pool_message(
+    active: &mut ActivePool,
+    source: Option<PeerId>,
+    message: TablePoolMessage,
+    now_unix_ms: u64,
+    transport: PoolMessageTransport,
+    events: &mut Vec<TablePoolEvent>,
+) -> Result<()> {
+    match message {
+        TablePoolMessage::Ticket(ticket) => {
+            if transport == PoolMessageTransport::Direct
+                && ticket.expires_at_unix_ms() <= now_unix_ms
+            {
+                return Ok(());
+            }
+            ticket.verify_at(now_unix_ms)?;
+            let source = verified_source(source, ticket.session_peer_id())?;
+            if ticket.level() != active.local_ticket.level() {
+                if transport == PoolMessageTransport::Direct {
+                    return Ok(());
                 }
-                let table_id = advertisement.table_id();
-                if active.advertisements.len() >= MAX_ADVERTISEMENTS
-                    && !active.advertisements.contains_key(&table_id)
-                {
-                    anyhow::bail!("牌桌广告缓存达到 {MAX_ADVERTISEMENTS} 张上限")
-                }
-                let should_replace = active.advertisements.get(&table_id).is_none_or(|current| {
-                    advertisement.membership_version() > current.membership_version()
-                        || (advertisement.membership_version() == current.membership_version()
-                            && advertisement.expires_at_unix_ms() > current.expires_at_unix_ms())
-                });
-                if should_replace {
-                    active.advertisements.insert(table_id, advertisement);
-                }
+                anyhow::bail!("公开池票据的牌局级别与当前池不一致")
+            }
+            if ticket.player_id() == active.local_ticket.player_id()
+                && ticket.session_peer_id() != active.local_ticket.session_peer_id()
+            {
+                push_identity_conflict_warning(active, source, events);
+                return Ok(());
+            }
+            let ticket_id = ticket.id();
+            if active.tickets.len() >= MAX_TICKETS && !active.tickets.contains_key(&ticket_id) {
+                anyhow::bail!("公开池票据缓存达到 {MAX_TICKETS} 张上限")
+            }
+            let is_new_ticket = !active.tickets.contains_key(&ticket_id);
+            let local_ticket_id = active.local_ticket.id();
+            active.tickets.retain(|existing_id, existing| {
+                *existing_id == local_ticket_id
+                    || existing.player_id() != ticket.player_id()
+                    || existing.session_peer_id() != ticket.session_peer_id()
+            });
+            active.tickets.insert(ticket_id, ticket);
+            if is_new_ticket
+                && active
+                    .local_advertisement
+                    .as_ref()
+                    .is_some_and(|advertisement| {
+                        advertisement.lifecycle != TableLifecycle::Closing
+                            && advertisement.member_count < token_holdem_domain::TABLE_CAPACITY
+                    })
+            {
+                active.last_advertisement_published_at = None;
             }
         }
-        Ok(vec![TablePoolEvent::DirectoryUpdated {
-            discovered_tables: u16::try_from(active.advertisements.len()).unwrap_or(u16::MAX),
-            waiting_players: u16::try_from(active.tickets.len()).unwrap_or(u16::MAX),
-        }])
+        TablePoolMessage::Advertisement(advertisement) => {
+            if transport == PoolMessageTransport::Direct
+                && advertisement.expires_at_unix_ms() <= now_unix_ms
+            {
+                return Ok(());
+            }
+            advertisement.verify_at(now_unix_ms)?;
+            let source = verified_source(source, advertisement.admission_peer_id())?;
+            if advertisement.level() != active.local_ticket.level() {
+                if transport == PoolMessageTransport::Direct {
+                    return Ok(());
+                }
+                anyhow::bail!("牌桌广告的牌局级别与当前池不一致")
+            }
+            if advertisement.signer_player_id() == active.local_ticket.player_id()
+                && advertisement.admission_peer_id() != active.local_ticket.session_peer_id()
+            {
+                push_identity_conflict_warning(active, source, events);
+                return Ok(());
+            }
+            let table_id = advertisement.table_id();
+            if active.advertisements.len() >= MAX_ADVERTISEMENTS
+                && !active.advertisements.contains_key(&table_id)
+            {
+                anyhow::bail!("牌桌广告缓存达到 {MAX_ADVERTISEMENTS} 张上限")
+            }
+            let should_replace = active.advertisements.get(&table_id).is_none_or(|current| {
+                advertisement.membership_version() > current.membership_version()
+                    || (advertisement.membership_version() == current.membership_version()
+                        && advertisement.expires_at_unix_ms() > current.expires_at_unix_ms())
+            });
+            if should_replace {
+                active.advertisements.insert(table_id, advertisement);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn push_identity_conflict_warning(
+    active: &mut ActivePool,
+    source: PeerId,
+    events: &mut Vec<TablePoolEvent>,
+) {
+    if active.identity_conflict_peers.insert(source) {
+        events.push(TablePoolEvent::Warning {
+            message: "检测到同一玩家身份已在另一台设备加入匹配；一个 Token Poker 身份不能同时占据两个席位".to_owned(),
+        });
     }
 }
 
@@ -638,11 +810,98 @@ fn issue_advertisement(
     .context("无法签发牌桌广告")
 }
 
+fn local_directory_messages(active: &ActivePool) -> Vec<TablePoolMessage> {
+    let mut messages = vec![TablePoolMessage::Ticket(active.local_ticket.clone())];
+    if let Some(local) = active.local_advertisement.as_ref() {
+        if let Some(advertisement) = active.advertisements.get(&local.table_id) {
+            messages.push(TablePoolMessage::Advertisement(advertisement.clone()));
+        }
+    }
+    messages
+}
+
+fn schedule_direct_sync(
+    active: &mut ActivePool,
+    swarm: &mut libp2p::Swarm<NetworkBehaviour>,
+    peers: &[PeerId],
+    now_monotonic: Instant,
+) -> Result<()> {
+    let messages = local_directory_messages(active);
+    let encoded =
+        cbor4ii::serde::to_vec(Vec::new(), &messages).context("无法摘要匹配池可靠同步目录")?;
+    let message_hash = *blake3::hash(&encoded).as_bytes();
+    let pending_peers = active
+        .pending_direct_syncs
+        .values()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let local_peer_id = *swarm.local_peer_id();
+    let peers = peers.iter().copied().collect::<BTreeSet<_>>();
+
+    for peer_id in peers.into_iter().take(MAX_DIRECT_SYNC_PEERS) {
+        if peer_id == local_peer_id
+            || pending_peers.contains(&peer_id)
+            || !swarm.is_connected(&peer_id)
+        {
+            continue;
+        }
+        let due = active.direct_sync_stamps.get(&peer_id).is_none_or(|stamp| {
+            stamp.message_hash != message_hash
+                || now_monotonic.saturating_duration_since(stamp.sent_at) >= DIRECT_SYNC_INTERVAL
+        });
+        if !due {
+            continue;
+        }
+        let request_id = swarm
+            .behaviour_mut()
+            .control
+            .send_request(&peer_id, ControlRequest::TablePoolSync(messages.clone()));
+        active.pending_direct_syncs.insert(request_id, peer_id);
+        active.direct_sync_stamps.insert(
+            peer_id,
+            DirectSyncStamp {
+                message_hash,
+                sent_at: now_monotonic,
+            },
+        );
+    }
+    Ok(())
+}
+
+fn push_directory_event_if_changed(
+    active: &mut ActivePool,
+    now_unix_ms: u64,
+    events: &mut Vec<TablePoolEvent>,
+) {
+    let discovered_tables = u16::try_from(active.advertisements.len()).unwrap_or(u16::MAX);
+    let waiting_players = u16::try_from(
+        rank_pool_tickets(
+            active.tickets.values(),
+            active.local_ticket.level(),
+            now_unix_ms,
+        )
+        .len(),
+    )
+    .unwrap_or(u16::MAX);
+    let directory = (discovered_tables, waiting_players);
+    if active.last_reported_directory == Some(directory) {
+        return;
+    }
+    active.last_reported_directory = Some(directory);
+    events.push(TablePoolEvent::DirectoryUpdated {
+        discovered_tables,
+        waiting_players,
+    });
+}
+
 fn publish(
     swarm: &mut libp2p::Swarm<NetworkBehaviour>,
     topic: &str,
     message: &TablePoolMessage,
 ) -> Result<bool> {
+    if !pool_gossip_enabled() {
+        return Ok(false);
+    }
     let payload =
         cbor4ii::serde::to_vec(Vec::new(), message).context("无法序列化公开牌桌池消息")?;
     Ok(swarm
@@ -652,11 +911,22 @@ fn publish(
         .is_ok())
 }
 
-fn verify_source(source: Option<PeerId>, expected: &[u8]) -> Result<()> {
+fn pool_gossip_enabled() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        std::env::var_os("TOKEN_POKER_TEST_DROP_POOL_GOSSIP").is_none()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        true
+    }
+}
+
+fn verified_source(source: Option<PeerId>, expected: &[u8]) -> Result<PeerId> {
     let source = source.context("严格签名的公开池消息缺少源 PeerId")?;
     let expected = PeerId::from_bytes(expected).context("公开池消息声明的 PeerId 无效")?;
     anyhow::ensure!(source == expected, "公开池消息源与声明的会话 PeerId 不一致");
-    Ok(())
+    Ok(source)
 }
 
 fn dial_advertisement(

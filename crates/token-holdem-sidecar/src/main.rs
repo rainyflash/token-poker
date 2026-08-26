@@ -737,6 +737,7 @@ fn protocol_tick(
     let now_unix_ms = unix_time_ms()?;
     let now_monotonic = Instant::now();
     let session_addresses = collect_session_addresses(swarm, state)?;
+    let direct_pool_peers = direct_pool_sync_peers(swarm, state);
     state
         .pool
         .set_local_advertisement(state.session.advertisement());
@@ -744,6 +745,7 @@ fn protocol_tick(
         let identity = state.identity.as_ref().context("协议轮询缺少玩家身份")?;
         state.pool.tick(
             swarm,
+            &direct_pool_peers,
             &session_addresses,
             &identity.device,
             &identity.certificate,
@@ -952,6 +954,22 @@ fn join_friend_room(
     Ok(())
 }
 
+fn direct_pool_sync_peers(
+    swarm: &libp2p::Swarm<token_holdem_network::NetworkBehaviour>,
+    state: &RuntimeState,
+) -> Vec<PeerId> {
+    swarm
+        .connected_peers()
+        .copied()
+        .filter(|peer_id| {
+            !state.discovery.is_configured_node(*peer_id)
+                && !state.relay.is_candidate(*peer_id)
+                && !state.archive.is_configured_peer(*peer_id)
+                && !state.session.manages_peer(*peer_id)
+        })
+        .collect()
+}
+
 fn handle_network_event(
     swarm: &mut libp2p::Swarm<token_holdem_network::NetworkBehaviour>,
     state: &mut RuntimeState,
@@ -1157,6 +1175,25 @@ fn handle_network_event(
                 request, channel, ..
             } => {
                 let response = match request {
+                    ControlRequest::TablePoolSync(messages) => {
+                        match state
+                            .pool
+                            .handle_direct_request(peer, messages, unix_time_ms()?)
+                        {
+                            Ok((events, response_messages)) => {
+                                process_pool_events(swarm, state, events)?;
+                                ControlResponse::TablePoolSync(response_messages)
+                            }
+                            Err(error) => {
+                                emit(&SidecarEvent::Warning {
+                                    message: format!("已拒绝无效点对点匹配池目录：{error:#}"),
+                                })?;
+                                ControlResponse::Rejected {
+                                    reason: error.to_string(),
+                                }
+                            }
+                        }
+                    }
                     ControlRequest::TableSession(payload) => {
                         let identity = state
                             .identity
@@ -1272,38 +1309,48 @@ fn handle_network_event(
                 request_id,
                 response,
             } => {
-                let handled_by_session = state.session.handle_direct_response(
-                    request_id,
-                    matches!(&response, ControlResponse::Accepted),
-                );
-                let handled_by_hand = state.hand.handle_direct_response(
-                    request_id,
-                    matches!(&response, ControlResponse::Accepted),
-                );
-                if let Some(events) = state.archive.handle_response(
-                    swarm,
-                    request_id,
-                    peer,
-                    response.clone(),
-                    unix_time_ms()?,
-                )? {
-                    process_archive_events(swarm, state, events)?;
-                } else if handled_by_session {
-                    if let ControlResponse::Rejected { reason } = response {
-                        emit(&SidecarEvent::Warning {
-                            message: format!("对手拒绝了牌桌共识消息：{reason}"),
-                        })?;
-                    }
-                } else if handled_by_hand {
-                    if let ControlResponse::Rejected { reason } = response {
+                if state.pool.owns_direct_request(request_id) {
+                    let events = state.pool.handle_direct_response(
+                        request_id,
+                        peer,
+                        response,
+                        unix_time_ms()?,
+                    )?;
+                    process_pool_events(swarm, state, events)?;
+                } else {
+                    let handled_by_session = state.session.handle_direct_response(
+                        request_id,
+                        matches!(&response, ControlResponse::Accepted),
+                    );
+                    let handled_by_hand = state.hand.handle_direct_response(
+                        request_id,
+                        matches!(&response, ControlResponse::Accepted),
+                    );
+                    if let Some(events) = state.archive.handle_response(
+                        swarm,
+                        request_id,
+                        peer,
+                        response.clone(),
+                        unix_time_ms()?,
+                    )? {
+                        process_archive_events(swarm, state, events)?;
+                    } else if handled_by_session {
+                        if let ControlResponse::Rejected { reason } = response {
+                            emit(&SidecarEvent::Warning {
+                                message: format!("对手拒绝了牌桌共识消息：{reason}"),
+                            })?;
+                        }
+                    } else if handled_by_hand {
+                        if let ControlResponse::Rejected { reason } = response {
+                            emit(&HandEvent::Warning {
+                                message: format!("对手拒绝了点对点牌桌消息：{reason}"),
+                            })?;
+                        }
+                    } else if let ControlResponse::Rejected { reason } = response {
                         emit(&HandEvent::Warning {
                             message: format!("对手拒绝了点对点牌桌消息：{reason}"),
                         })?;
                     }
-                } else if let ControlResponse::Rejected { reason } = response {
-                    emit(&HandEvent::Warning {
-                        message: format!("对手拒绝了点对点牌桌消息：{reason}"),
-                    })?;
                 }
             }
         },
@@ -1315,7 +1362,9 @@ fn handle_network_event(
                 ..
             },
         )) => {
-            if let Some(events) = state.archive.handle_failure(request_id, &error)? {
+            if state.pool.handle_direct_failure(request_id) {
+                // Directory anti-entropy retries on a bounded interval; one failed request does not prove the peer is offline.
+            } else if let Some(events) = state.archive.handle_failure(request_id, &error)? {
                 process_archive_events(swarm, state, events)?;
             } else if state.session.handle_direct_failure(request_id) {
                 // Signed Gossipsub backs table consensus. Preserve a healthy

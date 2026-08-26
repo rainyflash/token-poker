@@ -416,6 +416,12 @@ impl TableSessionRuntime {
             .is_some_and(ActiveSession::local_admission_acknowledged)
     }
 
+    pub(crate) fn manages_peer(&self, peer_id: PeerId) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.explicit_peers.contains(&peer_id))
+    }
+
     pub(crate) fn advertisement(
         &self,
     ) -> Option<super::table_pool_runtime::LocalTableAdvertisement> {

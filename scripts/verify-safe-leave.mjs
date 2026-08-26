@@ -292,6 +292,11 @@ async function waitForHand(players, handNumber, timeoutMs) {
       waitForWhere(player, "hand_state", (event) => event.hand_number === handNumber, 30_000),
     ),
   );
+  await waitUntil(
+    () => players.some((player) => handState(player, handNumber)?.can_act === true),
+    10_000,
+    `第 ${String(handNumber)} 手没有进入可行动状态`,
+  );
   const ready = players.map((player) =>
     player.latestWhere("hand_ready", (event) => event.hand_number === handNumber),
   );

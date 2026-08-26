@@ -1,4 +1,4 @@
-use crate::{FriendRoomInvite, HandPrivateMessage, HandPublicMessage};
+use crate::{FriendRoomInvite, HandPrivateMessage, HandPublicMessage, TablePoolMessage};
 use serde::{Deserialize, Serialize};
 use token_holdem_application::ContentAddress;
 use token_holdem_domain::PlayerId;
@@ -6,6 +6,7 @@ use token_holdem_domain::PlayerId;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ControlRequest {
     FriendRoom(FriendRoomInvite),
+    TablePoolSync(Vec<TablePoolMessage>),
     TableSession(Vec<u8>),
     HandPublic(HandPublicMessage),
     HandPrivate(HandPrivateMessage),
@@ -20,6 +21,7 @@ pub enum ControlRequest {
 pub enum ControlResponse {
     Accepted,
     Rejected { reason: String },
+    TablePoolSync(Vec<TablePoolMessage>),
     Archive(ArchiveResponse),
     ArchiveFetch(ArchiveFetchResponse),
     ArchiveList(ArchiveListResponse),

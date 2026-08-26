@@ -45,12 +45,12 @@ pub use wire::{
     ControlResponse, RecoveryFetchResponse, RecoveryStoreRequest, RecoveryStoreResponse,
 };
 
-pub const CONTROL_PROTOCOL: &str = "/token-holdem/control/10";
+pub const CONTROL_PROTOCOL: &str = "/token-holdem/control/11";
 pub const TABLE_POOL_TOPIC_PREFIX: &str = "/token-holdem/table-pool/2/";
 pub const TABLE_SESSION_TOPIC_PREFIX: &str = "/token-holdem/table-session/2/";
 pub const FRIEND_ROOM_TOPIC_PREFIX: &str = "/token-holdem/friend-room/2/";
-pub const PROTOCOL_VERSION: &str = "10";
-pub const IDENTIFY_PROTOCOL: &str = "/token-holdem/10.0.0";
+pub const PROTOCOL_VERSION: &str = "11";
+pub const IDENTIFY_PROTOCOL: &str = "/token-holdem/11.0.0";
 pub const RENDEZVOUS_REGISTRATION_TTL_SECONDS: u64 = 120;
 pub const RENDEZVOUS_SERVER_MIN_TTL_SECONDS: u64 = 60;
 pub const RENDEZVOUS_SERVER_MAX_TTL_SECONDS: u64 = 7_200;

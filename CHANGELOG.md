@@ -2,6 +2,19 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.14] - 2026-08-26
+
+### Fixed
+
+- Synchronize signed matchmaking tickets and table advertisements directly between connected players, so Circuit Relay connectivity no longer depends on Gossipsub mesh timing.
+- Coalesce unchanged matchmaking-directory events instead of flooding the runtime log while a player waits.
+- Warn explicitly when the same persistent player identity attempts to occupy two devices at once.
+
+### Changed
+
+- Advance the control and Identify protocol generation to 11 for the new reliable matchmaking-directory exchange.
+- Verify two-player convergence with matchmaking Gossipsub deliberately disabled, both directly and through Circuit Relay.
+
 ## [0.4.13] - 2026-08-24
 
 ### Fixed
@@ -212,6 +225,7 @@ All notable changes to Token Poker are documented here. The project follows [Sem
 - Plugin releases include per-file and archive SHA-256 metadata.
 - Release ZIPs remain unsigned; checksums verify integrity, not publisher identity.
 
+[0.4.14]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.14
 [0.4.13]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.13
 [0.4.12]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.12
 [0.4.11]: https://github.com/rainyflash/token-poker/releases/tag/v0.4.11
