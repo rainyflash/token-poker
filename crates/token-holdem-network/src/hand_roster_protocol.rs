@@ -9,7 +9,8 @@ use token_holdem_domain::{
     DevicePublicKey, HandRosterError, JoinClaimId, PlayerId, ReadyHandRoster,
 };
 use token_holdem_identity::{
-    DeviceAttestation, DeviceAttestationError, DeviceCertificate, DeviceIdentity,
+    is_signed_time_before_expiry, is_signed_time_not_future, DeviceAttestation,
+    DeviceAttestationError, DeviceCertificate, DeviceIdentity,
 };
 
 const HAND_ROSTER_PROPOSAL_DOMAIN: &[u8] = b"token-holdem/hand-roster-proposal/v1\0";
@@ -424,8 +425,8 @@ impl HandRosterAcceptance {
         {
             return Err(HandRosterProtocolError::AcceptanceCertificateMismatch);
         }
-        if self.accepted_at_unix_ms > now_unix_ms
-            || self.accepted_at_unix_ms >= intent.expires_at_unix_ms()
+        if !is_signed_time_not_future(self.accepted_at_unix_ms, now_unix_ms)
+            || !is_signed_time_before_expiry(self.accepted_at_unix_ms, intent.expires_at_unix_ms())
         {
             return Err(HandRosterProtocolError::AcceptanceOutsideValidityWindow);
         }

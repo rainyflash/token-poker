@@ -1,11 +1,13 @@
-use crate::{signature_bytes::SignatureBytes, CertificateError, DeviceCertificate, DeviceIdentity};
+use crate::{
+    is_signed_time_not_future, signature_bytes::SignatureBytes, CertificateError,
+    DeviceCertificate, DeviceIdentity,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 use token_holdem_domain::{DevicePublicKey, HandReceipt, PlayerId, ReceiptError};
 
 const RECEIPT_SIGNATURE_DOMAIN: &[u8] = b"token-holdem/receipt-signature/v1\0";
-const MAX_RECEIPT_FUTURE_SKEW_MS: u64 = 60_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantSignature {
@@ -73,7 +75,7 @@ fn validate_receipt_time(
     receipt: &HandReceipt,
     now_unix_ms: u64,
 ) -> Result<(), SignedReceiptError> {
-    if receipt.settled_at_unix_ms() > now_unix_ms.saturating_add(MAX_RECEIPT_FUTURE_SKEW_MS) {
+    if !is_signed_time_not_future(receipt.settled_at_unix_ms(), now_unix_ms) {
         return Err(SignedReceiptError::ReceiptFromFuture {
             settled_at: receipt.settled_at_unix_ms(),
             now: now_unix_ms,
@@ -212,7 +214,9 @@ mod tests {
             2,
             "10k-20k",
             TranscriptHash::new([4; 32]),
-            65_001,
+            5_000_u64
+                .saturating_add(crate::MAX_SIGNED_MESSAGE_CLOCK_SKEW_MS)
+                .saturating_add(1),
             vec![
                 HandOutcome {
                     player_id: root_a.player_id(),

@@ -1,4 +1,4 @@
-use crate::signature_bytes::SignatureBytes;
+use crate::{is_signed_time_window_active, signature_bytes::SignatureBytes};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -145,7 +145,11 @@ impl DeviceCertificate {
         root_key
             .verify(&self.canonical_unsigned_bytes(), &signature)
             .map_err(|_| CertificateError::InvalidRootSignature)?;
-        if now_unix_ms < self.issued_at_unix_ms || now_unix_ms >= self.expires_at_unix_ms {
+        if !is_signed_time_window_active(
+            self.issued_at_unix_ms,
+            self.expires_at_unix_ms,
+            now_unix_ms,
+        ) {
             return Err(CertificateError::OutsideValidityWindow);
         }
         Ok(())
@@ -228,8 +232,10 @@ mod tests {
 
         assert_eq!(certificate.player_id(), root.player_id());
         assert!(certificate.verify_at(5_000).is_ok());
+        assert!(certificate.verify_at(10_000).is_ok());
         assert_eq!(
-            certificate.verify_at(10_000),
+            certificate
+                .verify_at(10_000_u64.saturating_add(crate::MAX_SIGNED_MESSAGE_CLOCK_SKEW_MS)),
             Err(CertificateError::OutsideValidityWindow)
         );
     }

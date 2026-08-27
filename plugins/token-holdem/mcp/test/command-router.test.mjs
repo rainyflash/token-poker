@@ -15,6 +15,25 @@ test("离桌命令必须经过运行时确认通道", async () => {
   assert.deepEqual(calls, [[{ type: "leave_table" }, "request-a"]]);
 });
 
+test("身份创建与恢复命令共用请求相关的确认通道", async () => {
+  const calls = [];
+  const runtime = {
+    ensureIdentity: async (command, requestId) => calls.push([command, requestId]),
+    send: async () => assert.fail("身份命令不得走即发即忘通道"),
+  };
+  const restore = {
+    type: "restore_identity",
+    recovery_envelope: "THR1-envelope",
+    recovery_secret: "recovery-secret",
+    device_label: "Windows 工作站",
+  };
+
+  const status = await dispatchHostCommand(runtime, restore, "request-restore");
+
+  assert.equal(status, "confirmed");
+  assert.deepEqual(calls, [[restore, "request-restore"]]);
+});
+
 test("普通控制命令仍使用接受语义", async () => {
   const calls = [];
   const runtime = {

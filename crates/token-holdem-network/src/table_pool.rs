@@ -10,7 +10,8 @@ use token_holdem_domain::{
     TablePoolError, TABLE_CAPACITY, WAITING_CAPACITY,
 };
 use token_holdem_identity::{
-    DeviceAttestation, DeviceAttestationError, DeviceCertificate, DeviceIdentity,
+    is_signed_time_window_active, DeviceAttestation, DeviceAttestationError, DeviceCertificate,
+    DeviceIdentity,
 };
 
 const POOL_TICKET_DOMAIN: &[u8] = b"token-holdem/pool-ticket/v1\0";
@@ -616,7 +617,7 @@ fn validate_active_window(
     now_unix_ms: u64,
     error: TablePoolProtocolError,
 ) -> Result<(), TablePoolProtocolError> {
-    if now_unix_ms < created_at_unix_ms || now_unix_ms >= expires_at_unix_ms {
+    if !is_signed_time_window_active(created_at_unix_ms, expires_at_unix_ms, now_unix_ms) {
         return Err(error);
     }
     Ok(())
@@ -805,5 +806,23 @@ mod tests {
         let decoded: PoolTicket = cbor4ii::serde::from_slice(&encoded).expect("票据应当解码成功");
         assert_eq!(decoded, fixture.ticket);
         assert!(decoded.verify_at(3_000).is_ok());
+    }
+
+    #[test]
+    fn 公开池消息允许有限跨设备时钟偏差() {
+        let fixture = fixture(1, 1_000_000);
+        let advertisement = advertisement(&fixture, 1, 1, 0);
+
+        assert!(fixture.ticket.verify_at(0).is_ok());
+        assert!(advertisement.verify_at(0).is_ok());
+        assert_eq!(
+            fixture.ticket.verify_at(
+                fixture
+                    .ticket
+                    .expires_at_unix_ms()
+                    .saturating_add(token_holdem_identity::MAX_SIGNED_MESSAGE_CLOCK_SKEW_MS)
+            ),
+            Err(TablePoolProtocolError::TicketExpired)
+        );
     }
 }

@@ -42,6 +42,7 @@ pub enum SidecarCommand {
         device_label: String,
     },
     RestoreIdentity {
+        request_id: Option<String>,
         recovery_envelope: String,
         recovery_secret: String,
         device_label: String,
@@ -115,9 +116,9 @@ impl SidecarCommand {
     #[must_use]
     pub fn request_id(&self) -> Option<&str> {
         match self {
-            Self::EnsureIdentity { request_id, .. } | Self::LeaveTable { request_id } => {
-                request_id.as_deref()
-            }
+            Self::EnsureIdentity { request_id, .. }
+            | Self::RestoreIdentity { request_id, .. }
+            | Self::LeaveTable { request_id } => request_id.as_deref(),
             _ => None,
         }
     }
@@ -184,6 +185,15 @@ mod tests {
         assert_eq!(
             correlated_identity.request_id(),
             Some("7c98e82f-55fd-45e4-9a62-bd26dcdebb18")
+        );
+
+        let correlated_restore = decode_command_line(
+            r#"{"type":"restore_identity","request_id":"332865b3-c77c-474f-a60e-263fe687540e","recovery_envelope":"THR1-envelope","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
+        )
+        .expect("带请求 ID 的身份恢复命令必须能被解码");
+        assert_eq!(
+            correlated_restore.request_id(),
+            Some("332865b3-c77c-474f-a60e-263fe687540e")
         );
 
         let correlated_leave = decode_command_line(

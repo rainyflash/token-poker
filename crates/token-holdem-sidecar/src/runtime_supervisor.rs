@@ -145,6 +145,7 @@ mod windows {
     use super::*;
     use futures::{SinkExt, StreamExt};
     use std::{
+        collections::VecDeque,
         process::Stdio,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -167,6 +168,7 @@ mod windows {
     const WORKER_EVENT_CHANNEL_CAPACITY: usize = 1_024;
     const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
     const WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+    const WORKER_STDERR_TAIL_LINES: usize = 8;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     #[derive(Debug, Default)]
@@ -193,8 +195,14 @@ mod windows {
     }
 
     enum WorkerOutput {
-        Event { generation: u64, line: String },
-        Closed { generation: u64 },
+        Event {
+            generation: u64,
+            line: String,
+        },
+        Closed {
+            generation: u64,
+            read_error: Option<String>,
+        },
     }
 
     struct ManagedWorker {
@@ -202,6 +210,7 @@ mod windows {
         stdin: ChildStdin,
         generation: u64,
         bootstrapped: bool,
+        stderr_tail: Arc<RwLock<VecDeque<String>>>,
     }
 
     struct ClientLease {
@@ -675,18 +684,18 @@ mod windows {
                                 }
                             }
                         }
-                        WorkerOutput::Closed { generation } => {
+                        WorkerOutput::Closed { generation, read_error } => {
                             let is_current = worker.as_ref().is_some_and(|value| value.generation == generation);
                             if !is_current {
                                 continue;
                             }
                             if let Some(mut closed) = worker.take() {
-                                let stop_result = stop_worker(&mut closed).await;
                                 update_worker_status(&status, None).await;
-                                let message = match stop_result {
-                                    Ok(()) => "牌局内核事件通道意外关闭；下一次操作会自动重启。".to_owned(),
-                                    Err(error) => format!("牌局内核异常且无法完整回收：{error:#}；下一次操作会自动重启。"),
-                                };
+                                journal.write().await.reset_generation();
+                                let exit = inspect_unexpected_worker_exit(&mut closed, read_error).await;
+                                let message = format!(
+                                    "牌局内核意外退出（{exit}）；运行状态已失效，界面将重新初始化。"
+                                );
                                 publish_warning(&journal, &event_sender, &message).await;
                             }
                         }
@@ -736,6 +745,7 @@ mod windows {
 
         let stdout_sender = output_sender.clone();
         tokio::spawn(async move {
+            let mut read_error = None;
             let mut lines = FramedRead::new(
                 stdout,
                 LinesCodec::new_with_max_length(crate::MAX_COMMAND_LINE_BYTES),
@@ -753,19 +763,34 @@ mod windows {
                     }
                     Err(error) => {
                         eprintln!("[token-holdem-runtime] 读取牌局事件失败：{error}");
+                        read_error = Some(error.to_string());
                         break;
                     }
                 }
             }
             let _ = stdout_sender
-                .send(WorkerOutput::Closed { generation })
+                .send(WorkerOutput::Closed {
+                    generation,
+                    read_error,
+                })
                 .await;
         });
+        let stderr_tail = Arc::new(RwLock::new(VecDeque::with_capacity(
+            WORKER_STDERR_TAIL_LINES,
+        )));
+        let captured_stderr = Arc::clone(&stderr_tail);
         tokio::spawn(async move {
             let mut lines = FramedRead::new(stderr, LinesCodec::new_with_max_length(16 * 1_024));
             while let Some(line) = lines.next().await {
                 match line {
-                    Ok(line) => eprintln!("[token-holdem-sidecar] {line}"),
+                    Ok(line) => {
+                        eprintln!("[token-holdem-sidecar] {line}");
+                        let mut tail = captured_stderr.write().await;
+                        if tail.len() == WORKER_STDERR_TAIL_LINES {
+                            tail.pop_front();
+                        }
+                        tail.push_back(line);
+                    }
                     Err(error) => {
                         eprintln!("[token-holdem-runtime] 读取牌局日志失败：{error}");
                         return;
@@ -779,6 +804,7 @@ mod windows {
             stdin,
             generation,
             bootstrapped: false,
+            stderr_tail,
         })
     }
 
@@ -827,6 +853,38 @@ mod windows {
             }
         }
         Ok(())
+    }
+
+    async fn inspect_unexpected_worker_exit(
+        worker: &mut ManagedWorker,
+        read_error: Option<String>,
+    ) -> String {
+        let _ = worker.stdin.shutdown().await;
+        let status = match timeout(WORKER_SHUTDOWN_TIMEOUT, worker.child.wait()).await {
+            Ok(Ok(status)) => format!("退出状态 {status}"),
+            Ok(Err(error)) => format!("无法读取退出状态：{error}"),
+            Err(_) => match worker.child.kill().await {
+                Ok(()) => {
+                    let _ = worker.child.wait().await;
+                    "退出超时，已强制回收".to_owned()
+                }
+                Err(error) => format!("退出超时且无法强制回收：{error}"),
+            },
+        };
+        let stderr = worker
+            .stderr_tail
+            .read()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" | ");
+        match (read_error, stderr.is_empty()) {
+            (Some(error), false) => format!("{status}；事件读取错误：{error}；日志：{stderr}"),
+            (Some(error), true) => format!("{status}；事件读取错误：{error}"),
+            (None, false) => format!("{status}；日志：{stderr}"),
+            (None, true) => status,
+        }
     }
 
     async fn publish_event(

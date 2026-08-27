@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 use token_holdem_domain::{Chips, PlayerId, StakeLevel, TableId, TableLifecycle};
-use token_holdem_identity::{DeviceCertificate, DeviceIdentity};
+use token_holdem_identity::{is_signed_time_window_expired, DeviceCertificate, DeviceIdentity};
 use token_holdem_network::{
     rank_pool_tickets, select_table_advertisement, ControlRequest, ControlResponse,
     NetworkBehaviour, PoolTicket, PoolTicketId, TableAdvertisement, TablePoolMessage,
@@ -568,7 +568,7 @@ fn merge_pool_message(
     match message {
         TablePoolMessage::Ticket(ticket) => {
             if transport == PoolMessageTransport::Direct
-                && ticket.expires_at_unix_ms() <= now_unix_ms
+                && is_signed_time_window_expired(ticket.expires_at_unix_ms(), now_unix_ms)
             {
                 return Ok(());
             }
@@ -612,7 +612,7 @@ fn merge_pool_message(
         }
         TablePoolMessage::Advertisement(advertisement) => {
             if transport == PoolMessageTransport::Direct
-                && advertisement.expires_at_unix_ms() <= now_unix_ms
+                && is_signed_time_window_expired(advertisement.expires_at_unix_ms(), now_unix_ms)
             {
                 return Ok(());
             }

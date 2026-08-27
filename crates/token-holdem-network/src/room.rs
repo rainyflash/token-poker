@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use token_holdem_domain::{DevicePublicKey, PlayerId, StakeLevel, TableId, TABLE_CAPACITY};
 use token_holdem_identity::{
-    DeviceAttestation, DeviceAttestationError, DeviceCertificate, DeviceIdentity,
+    is_signed_time_window_active, DeviceAttestation, DeviceAttestationError, DeviceCertificate,
+    DeviceIdentity,
 };
 
 const FRIEND_ROOM_DOMAIN: &[u8] = b"token-holdem/friend-room-invite/v2\0";
@@ -99,7 +100,11 @@ impl FriendRoomInvite {
             self.created_at_unix_ms,
             self.expires_at_unix_ms,
         )?;
-        if now_unix_ms < self.created_at_unix_ms || now_unix_ms >= self.expires_at_unix_ms {
+        if !is_signed_time_window_active(
+            self.created_at_unix_ms,
+            self.expires_at_unix_ms,
+            now_unix_ms,
+        ) {
             return Err(FriendRoomInviteError::Expired);
         }
         if derive_room_id(&self.room_secret) != self.room_id {

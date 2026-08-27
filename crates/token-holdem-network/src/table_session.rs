@@ -10,6 +10,7 @@ use token_holdem_domain::{
     StakeLevel, TableId, TableMember, TableMembership, TABLE_CAPACITY, WAITING_CAPACITY,
 };
 use token_holdem_identity::{
+    is_signed_time_before_expiry, is_signed_time_not_future, is_signed_time_window_active,
     DeviceAttestation, DeviceAttestationError, DeviceCertificate, DeviceIdentity,
 };
 
@@ -777,8 +778,11 @@ impl MembershipAcceptance {
         {
             return Err(TableSessionProtocolError::AcceptanceIdentityMismatch);
         }
-        if self.accepted_at_unix_ms > now_unix_ms
-            || self.accepted_at_unix_ms >= seat.join_intent().expires_at_unix_ms()
+        if !is_signed_time_not_future(self.accepted_at_unix_ms, now_unix_ms)
+            || !is_signed_time_before_expiry(
+                self.accepted_at_unix_ms,
+                seat.join_intent().expires_at_unix_ms(),
+            )
         {
             return Err(TableSessionProtocolError::AcceptanceOutsideValidityWindow);
         }
@@ -893,8 +897,8 @@ fn validate_join_window(
     expires_at_unix_ms: u64,
 ) -> Result<(), TableSessionProtocolError> {
     validate_window(created_at_unix_ms, expires_at_unix_ms)?;
-    if created_at_unix_ms < ticket.created_at_unix_ms()
-        || expires_at_unix_ms > ticket.expires_at_unix_ms()
+    if !is_signed_time_not_future(ticket.created_at_unix_ms(), created_at_unix_ms)
+        || !is_signed_time_before_expiry(expires_at_unix_ms, ticket.expires_at_unix_ms())
     {
         return Err(TableSessionProtocolError::JoinIntentOutsideTicketWindow);
     }
@@ -931,7 +935,7 @@ fn validate_active_window(
     now_unix_ms: u64,
     error: TableSessionProtocolError,
 ) -> Result<(), TableSessionProtocolError> {
-    if now_unix_ms < created_at_unix_ms || now_unix_ms >= expires_at_unix_ms {
+    if !is_signed_time_window_active(created_at_unix_ms, expires_at_unix_ms, now_unix_ms) {
         return Err(error);
     }
     Ok(())
@@ -1119,8 +1123,27 @@ mod tests {
         let table_id = TableId::new([7; 32]);
         let fixture = fixture(1, table_id);
         assert_eq!(fixture.join.table_id(), table_id);
+        assert!(fixture.join.verify_at(0).is_ok());
         assert!(fixture.join.verify_at(3_000).is_ok());
         assert_ne!(fixture.join.claim_id().as_bytes(), &[0; 32]);
+    }
+
+    #[test]
+    fn 入桌意图签发允许票据来自时钟略快的设备() {
+        let table_id = TableId::new([7; 32]);
+        let fixture = fixture(1, table_id);
+        let join = JoinIntent::issue(
+            table_id,
+            fixture.join.ticket().clone(),
+            0,
+            1_000,
+            [42; 16],
+            &fixture.device,
+            fixture.certificate,
+        )
+        .expect("有限时钟偏差不应阻断入桌意图签发");
+
+        assert!(join.verify_at(0).is_ok());
     }
 
     #[test]
@@ -1154,6 +1177,7 @@ mod tests {
                 .expect("成员确认应当签发成功")
             })
             .collect::<Vec<_>>();
+        assert!(verify_membership_acceptances(&proposal, &acceptances, 0).is_ok());
         assert!(verify_membership_acceptances(&proposal, &acceptances, 3_400).is_ok());
         assert_eq!(
             verify_membership_acceptances(&proposal, &acceptances[..1], 3_400),

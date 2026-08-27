@@ -98,10 +98,14 @@ export class SidecarRuntime {
       command,
       requestId,
       IDENTITY_ACK_TIMEOUT_MS,
-      (candidate) => candidate.type === "identity_ready",
+      (candidate) =>
+        candidate.type === "identity_ready" ||
+        (candidate.type === "command_confirmed" &&
+          (candidate.command_type === "ensure_identity" ||
+            candidate.command_type === "restore_identity")),
       "牌局内核未在超时前确认玩家身份",
     );
-    const identity = parseIdentitySnapshot(event);
+    const identity = parseIdentitySnapshot(event) ?? this.#identitySnapshot;
     if (identity === null) throw new Error("牌局内核返回了无效的玩家身份确认");
     return identity;
   }

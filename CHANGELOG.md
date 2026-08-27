@@ -2,6 +2,21 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.17] - 2026-08-27
+
+### Fixed
+
+- Accept signed matchmaking tickets, table advertisements, join intents, membership confirmations, hand-roster confirmations, and device certificates across a bounded five-minute device clock skew.
+- Permit a join intent to remain bounded by a remote ticket under the same clock-skew policy, preventing two valid players from looping forever on the joining-table screen.
+- Isolate malformed or temporarily invalid peer messages from the game-core event loop so one rejected message cannot terminate matchmaking or gameplay.
+- Invalidate stale shared-runtime projections when the game core exits unexpectedly and report the exit status plus a bounded stderr tail before restarting.
+- Correlate both identity creation and recovery confirmations with the originating UI request.
+
+### Added
+
+- Add cross-clock regression coverage for public-pool discovery, join-intent issuance, membership consensus, hand-roster consensus, certificate verification, and settlement receipts.
+- Verify the repaired two-player path through a real Circuit Relay hand and a three-hand end-to-end session.
+
 ## [0.4.16] - 2026-08-26
 
 ### Fixed

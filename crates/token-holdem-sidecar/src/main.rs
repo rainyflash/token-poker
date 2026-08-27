@@ -29,7 +29,7 @@ use std::{
     collections::HashMap,
     io::Write,
     path::PathBuf,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use token_holdem_domain::{
     public_stake_level, Chips, PlayerAction, PlayerId, PlayerStatistics, StakeLevel,
@@ -293,6 +293,7 @@ async fn main() -> Result<()> {
     );
     let mut protocol_interval = tokio::time::interval(POOL_TICK_INTERVAL);
     protocol_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut recoverable_faults = RecoverableFaultThrottle::default();
     loop {
         tokio::select! {
             line = lines.next(), if !daemon => {
@@ -341,8 +342,16 @@ async fn main() -> Result<()> {
                     None => return Ok(()),
                 }
             }
-            event = swarm.select_next_some() => handle_network_event(&mut swarm, &mut state, event)?,
-            _ = protocol_interval.tick() => protocol_tick(&mut swarm, &mut state)?,
+            event = swarm.select_next_some() => {
+                if let Err(error) = handle_network_event(&mut swarm, &mut state, event) {
+                    report_recoverable_fault(&mut recoverable_faults, "网络事件", &error)?;
+                }
+            },
+            _ = protocol_interval.tick() => {
+                if let Err(error) = protocol_tick(&mut swarm, &mut state) {
+                    report_recoverable_fault(&mut recoverable_faults, "协议轮询", &error)?;
+                }
+            },
             result = tokio::signal::ctrl_c() => {
                 result.context("监听退出信号失败")?;
                 emit(&SidecarEvent::ShutdownComplete)?;
@@ -350,6 +359,41 @@ async fn main() -> Result<()> {
             }
         }
     }
+}
+
+const RECOVERABLE_FAULT_REPEAT_INTERVAL: Duration = Duration::from_secs(5);
+
+#[derive(Default)]
+struct RecoverableFaultThrottle {
+    last_message: Option<String>,
+    last_emitted_at: Option<Instant>,
+}
+
+impl RecoverableFaultThrottle {
+    fn should_emit(&mut self, message: &str, now: Instant) -> bool {
+        let is_repeated = self.last_message.as_deref() == Some(message)
+            && self.last_emitted_at.is_some_and(|last| {
+                now.saturating_duration_since(last) < RECOVERABLE_FAULT_REPEAT_INTERVAL
+            });
+        if is_repeated {
+            return false;
+        }
+        self.last_message = Some(message.to_owned());
+        self.last_emitted_at = Some(now);
+        true
+    }
+}
+
+fn report_recoverable_fault(
+    throttle: &mut RecoverableFaultThrottle,
+    scope: &str,
+    error: &anyhow::Error,
+) -> Result<()> {
+    let message = format!("{scope}遇到可恢复错误，牌局内核将继续运行：{error:#}");
+    if throttle.should_emit(&message, Instant::now()) {
+        emit(&SidecarEvent::Warning { message })?;
+    }
+    Ok(())
 }
 
 fn handle_command(
@@ -464,6 +508,7 @@ fn handle_command(
             sync_statistics(swarm, state)?;
         }
         SidecarCommand::RestoreIdentity {
+            request_id,
             recovery_envelope,
             recovery_secret,
             device_label,
@@ -478,7 +523,7 @@ fn handle_command(
                 &account_fingerprint,
                 unix_time_ms()?,
             )?;
-            emit_identity_ready(&identity, None)?;
+            emit_identity_ready(&identity, request_id.as_deref())?;
             state.identity = Some(identity);
             publish_identity_recovery(swarm, state)?;
             sync_statistics(swarm, state)?;
@@ -2404,6 +2449,17 @@ mod tests {
         .expect("缺少绑定时仍应生成不可用占位指纹");
 
         assert!(!bound);
+    }
+
+    #[test]
+    fn 可恢复错误限流但不同错误立即可见() {
+        let start = Instant::now();
+        let mut throttle = RecoverableFaultThrottle::default();
+
+        assert!(throttle.should_emit("错误 A", start));
+        assert!(!throttle.should_emit("错误 A", start + Duration::from_secs(1)));
+        assert!(throttle.should_emit("错误 A", start + RECOVERABLE_FAULT_REPEAT_INTERVAL));
+        assert!(throttle.should_emit("错误 B", start + RECOVERABLE_FAULT_REPEAT_INTERVAL));
     }
 
     #[test]
