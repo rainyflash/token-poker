@@ -13,8 +13,11 @@ import { runtimePipeName } from "./runtime-protocol.mjs";
 
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 30 * 60;
 
-export async function createRuntimeLaunchPlan(pluginRoot) {
+export async function createRuntimeLaunchPlan(pluginRoot, releaseVersion) {
   const resolvedPluginRoot = resolve(pluginRoot);
+  if (typeof releaseVersion !== "string" || releaseVersion.length === 0) {
+    throw new Error("共享运行时缺少插件版本");
+  }
   const projectRoot = resolve(resolvedPluginRoot, "..", "..");
   const statePaths = defaultStatePaths();
   const communityDirectoryPath = await firstExisting(
@@ -50,7 +53,7 @@ export async function createRuntimeLaunchPlan(pluginRoot) {
     `--power-source=${hostConditions.powerSource}`,
   ]);
   const bootstrapCommands = Object.freeze(createBootstrapCommands(networkPlan));
-  const pipeName = runtimePipeName();
+  const pipeName = runtimePipeName(`${resolvedPluginRoot}\0${releaseVersion}`);
   const idleTimeoutSeconds = readIdleTimeoutSeconds();
   return Object.freeze({
     runtimePath,

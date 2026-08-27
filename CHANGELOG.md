@@ -2,6 +2,17 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.18] - 2026-08-27
+
+### Fixed
+
+- Scope the shared game runtime to both the installed plugin path and release version, so an upgraded Codex plugin can never reattach to a still-running game core from an older release.
+- Preserve shared-runtime reuse across Codex tasks running the same installed release while isolating repair and upgrade lifecycles.
+
+### Added
+
+- Add regression coverage proving identical release scopes share one pipe and different plugin versions always receive distinct runtime pipes.
+
 ## [0.4.17] - 2026-08-27
 
 ### Fixed

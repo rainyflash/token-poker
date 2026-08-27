@@ -4,13 +4,18 @@ import { homedir, userInfo } from "node:os";
 export const RUNTIME_PROTOCOL_VERSION = 6;
 const PIPE_PREFIX = String.raw`\\.\pipe\token-holdem-runtime-v6-`;
 
-export function runtimePipeName() {
+export function runtimePipeName(runtimeScope) {
   const override = process.env.TOKEN_HOLDEM_RUNTIME_PIPE;
   if (typeof override === "string" && override.length > 0) {
     validatePipeName(override);
     return override;
   }
-  const identity = `${homedir()}\0${userInfo().username}`.toLocaleLowerCase("en-US");
+  if (typeof runtimeScope !== "string" || runtimeScope.length === 0) {
+    throw new Error("共享运行时缺少版本隔离范围");
+  }
+  const identity = `${homedir()}\0${userInfo().username}\0${runtimeScope}`.toLocaleLowerCase(
+    "en-US",
+  );
   const suffix = createHash("sha256").update(identity, "utf8").digest("hex").slice(0, 24);
   return `${PIPE_PREFIX}${suffix}`;
 }

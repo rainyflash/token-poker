@@ -26,7 +26,7 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
   let first = null;
   let second = null;
   try {
-    first = new SidecarRuntime(pluginRoot);
+    first = new SidecarRuntime(pluginRoot, "test-build");
     await first.ensureStarted();
     const firstReady = await waitForEvent(first, "ready", 15_000);
     const firstRuntimeId = first.readEvents(0).runtime_id;
@@ -57,7 +57,7 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
     await first.close();
     first = null;
 
-    second = new SidecarRuntime(pluginRoot);
+    second = new SidecarRuntime(pluginRoot, "test-build");
     await second.ensureStarted();
     const replayedReady = findEvent(second, "ready");
     const replayedToken = findEvent(second, "token_snapshot_accepted");

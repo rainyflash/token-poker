@@ -26,7 +26,7 @@ const manifest = JSON.parse(
   await readFile(join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"),
 );
 const APP_URI = "ui://token-holdem/table.html";
-const runtime = new SidecarRuntime(pluginRoot);
+const runtime = new SidecarRuntime(pluginRoot, manifest.version);
 const officialTokens = new OfficialTokenService({
   reader: new CodexAccountUsageReader({ clientVersion: manifest.version }),
   runtime,

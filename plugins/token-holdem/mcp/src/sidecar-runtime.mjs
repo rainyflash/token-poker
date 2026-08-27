@@ -27,6 +27,7 @@ export const MAX_POLL_WAIT_MS = 25_000;
 
 export class SidecarRuntime {
   #pluginRoot;
+  #releaseVersion;
   #socket = null;
   #lines = null;
   #starting = null;
@@ -50,8 +51,9 @@ export class SidecarRuntime {
   #identitySnapshot = null;
   #serviceCacheQueue = Promise.resolve();
 
-  constructor(pluginRoot) {
+  constructor(pluginRoot, releaseVersion) {
     this.#pluginRoot = pluginRoot;
+    this.#releaseVersion = releaseVersion;
   }
 
   get latestSequence() {
@@ -243,7 +245,7 @@ export class SidecarRuntime {
   }
 
   async #start() {
-    const plan = await createRuntimeLaunchPlan(this.#pluginRoot);
+    const plan = await createRuntimeLaunchPlan(this.#pluginRoot, this.#releaseVersion);
     this.#launchPlan = plan;
     this.#publishLaunchPlan(plan);
     let socket;
@@ -469,7 +471,7 @@ export class SidecarRuntime {
   }
 
   async #restart() {
-    const plan = await createRuntimeLaunchPlan(this.#pluginRoot);
+    const plan = await createRuntimeLaunchPlan(this.#pluginRoot, this.#releaseVersion);
     this.#launchPlan = plan;
     await this.ensureStarted();
     await this.#write({

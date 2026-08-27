@@ -144,7 +144,7 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
   } finally {
     await closeMcpSession(firstSession);
     await closeMcpSession(secondSession);
-    const runtime = new SidecarRuntime(pluginRoot);
+    const runtime = new SidecarRuntime(pluginRoot, "test-build");
     await runtime.terminateRuntimeForTesting().catch(() => undefined);
     restoreEnvironment(environmentSnapshot);
     await rm(isolatedLocalAppData, { recursive: true, force: true });
