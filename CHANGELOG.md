@@ -2,6 +2,18 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.16] - 2026-08-26
+
+### Fixed
+
+- Restore the active matchmaking room and current hand immediately from the MCP session projection, even when the browser event poll is delayed or a Codex view is remounted.
+- Apply projected recovery events behind a monotonic sequence cursor so stale tool results cannot replace a newer table state.
+- Derive opponent presence from the signed room roster and active hand instead of transient transport events, preventing an active two-player table from being labeled as waiting for opponents.
+
+### Added
+
+- Add regression coverage for projected room and playable-hand recovery across Codex task and UI lifecycle boundaries.
+
 ## [0.4.15] - 2026-08-26
 
 ### Fixed

@@ -147,13 +147,19 @@ export class SessionEventProjection {
 
   merge(retainedEvents, afterSequence) {
     const bySequence = new Map();
-    for (const entry of this.#slots.values()) {
+    for (const entry of this.snapshot()) {
       if (entry.sequence > afterSequence) bySequence.set(entry.sequence, entry);
     }
     for (const entry of retainedEvents) {
       if (entry.sequence > afterSequence) bySequence.set(entry.sequence, entry);
     }
     return [...bySequence.values()].sort((left, right) => left.sequence - right.sequence);
+  }
+
+  snapshot() {
+    return Object.freeze(
+      [...this.#slots.values()].sort((left, right) => left.sequence - right.sequence),
+    );
   }
 
   clear() {

@@ -316,6 +316,49 @@ test("重新挂载时忽略宿主重放的旧轮询水位并从零恢复牌桌",
   await harness.app.onteardown({}, {});
 });
 
+test("事件轮询延迟时仍立即转发当前牌桌与手牌投影", async () => {
+  const harness = createHarness();
+  const currentState = {
+    identity: null,
+    latest_sequence: 84,
+    events: [
+      {
+        sequence: 61,
+        event: {
+          type: "room_snapshot",
+          table_id: "table-live",
+          seats: [
+            { physical_seat: 1, player_id: "player-a", buy_in: 20_000_000 },
+            { physical_seat: 2, player_id: "player-b", buy_in: 20_000_000 },
+          ],
+        },
+      },
+      {
+        sequence: 84,
+        event: {
+          type: "hand_state",
+          table_id: "table-live",
+          hand_number: 1,
+          sequence: 0,
+          can_act: true,
+        },
+      },
+    ],
+  };
+
+  harness.app.emit("toolresult", {
+    structuredContent: { current_state: currentState },
+  });
+
+  assert.deepEqual(
+    harness.state.dispatchedEvents.findLast(
+      (event) => event.type === "token-holdem:current-state",
+    )?.detail,
+    currentState,
+  );
+  await harness.app.onteardown({}, {});
+});
+
 test("身份命令只在请求 ID 对应的内核确认返回后报告成功", async () => {
   let capturedRequestId = null;
   const harness = createHarness({

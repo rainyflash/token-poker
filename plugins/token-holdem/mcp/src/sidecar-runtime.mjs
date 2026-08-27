@@ -71,7 +71,11 @@ export class SidecarRuntime {
   }
 
   get currentState() {
-    return Object.freeze({ identity: this.#identitySnapshot });
+    return Object.freeze({
+      identity: this.#identitySnapshot,
+      latest_sequence: this.#sequence,
+      events: this.#sessionProjection.snapshot(),
+    });
   }
 
   async ensureStarted() {

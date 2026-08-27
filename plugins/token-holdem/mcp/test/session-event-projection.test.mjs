@@ -49,6 +49,34 @@ test("身份事件超过普通缓存上限后仍存在于当前状态投影", ()
   );
 });
 
+test("当前状态快照按序包含牌桌与可操作手牌", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(2, "room_entered", { table_id: "table-a" }));
+  projection.observe(entry(4, "room_snapshot", {
+    table_id: "table-a",
+    seats: [{ player_id: "player-a" }, { player_id: "player-b" }],
+  }));
+  projection.observe(entry(6, "hand_protocol_started", {
+    table_id: "table-a",
+    hand_number: 4,
+  }));
+  projection.observe(entry(8, "hand_state", {
+    table_id: "table-a",
+    hand_number: 4,
+    sequence: 0,
+  }));
+
+  assert.deepEqual(
+    projection.snapshot().map((event) => [event.sequence, event.event.type]),
+    [
+      [2, "room_entered"],
+      [4, "room_snapshot"],
+      [6, "hand_protocol_started"],
+      [8, "hand_state"],
+    ],
+  );
+});
+
 test("离桌完成后不会复活旧房间投影", () => {
   const projection = new SessionEventProjection();
   projection.observe(entry(1, "room_entered", { table_id: "table-a" }));

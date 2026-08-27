@@ -17,6 +17,7 @@ import {
   parseTokenSnapshot,
   parseUpdateStatus,
 } from "./guards";
+import { parseCurrentStateProjection } from "./current-state-policy";
 import {
   isCurrentHand,
   phaseAfterHandReady,
@@ -284,6 +285,7 @@ class HostBridgeStore {
   readonly #listeners = new Set<Listener>();
   #snapshot: BridgeSnapshot = INITIAL_STATE;
   #previewPoolRun = 0;
+  #currentStateSequence = -1;
 
   constructor() {
     globalThis.addEventListener("token-holdem:snapshot", this.#handleTokenSnapshot);
@@ -410,7 +412,19 @@ class HostBridgeStore {
 
   #applyCurrentState(value: unknown): void {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return;
-    const identity = (value as Record<string, unknown>).identity;
+    const record = value as Record<string, unknown>;
+    const projection = parseCurrentStateProjection(record, parseSidecarEvent);
+    if (projection !== null) {
+      if (projection.latestSequence <= this.#currentStateSequence) return;
+      this.#currentStateSequence = projection.latestSequence;
+      this.#applyCurrentIdentity(record.identity);
+      for (const event of projection.events) this.#applySidecarEvent(event);
+      return;
+    }
+    this.#applyCurrentIdentity(record.identity);
+  }
+
+  #applyCurrentIdentity(identity: unknown): void {
     if (identity === null) {
       if (this.#snapshot.identity !== null) {
         this.#replace({ ...this.#snapshot, identity: null });

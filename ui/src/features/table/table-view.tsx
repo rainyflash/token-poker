@@ -16,6 +16,7 @@ import { useSafeLeave } from "../session/model/use-safe-leave";
 import { ActionConsole } from "./components/action-console";
 import { HandInfoPanel } from "./components/hand-info-panel";
 import { PokerTable } from "./components/poker-table";
+import { hasConfirmedOpponent } from "./model/table-presence";
 
 interface TableViewProps {
   readonly bridge: BridgeSnapshot;
@@ -41,6 +42,7 @@ export function TableView({ bridge, sendCommand, sendConfirmedCommand, onOpenSta
   const localSeat = hand.seats.find((seat) => seat.seat === hand.localSeat);
   const heroStack = localSeat?.stack ?? hand.buyIns.at((hand.localSeat ?? 1) - 1) ?? 0;
   const playerCount = hand.players.length;
+  const opponentConnected = hasConfirmedOpponent(bridge);
   const minimumBuyIn = hand.buyIns.length === 0 ? 0 : Math.min(...hand.buyIns);
   const maximumBuyIn = hand.buyIns.length === 0 ? 0 : Math.max(...hand.buyIns);
   const minimumRaise = hand.minimumRaiseTo;
@@ -163,7 +165,10 @@ export function TableView({ bridge, sendCommand, sendConfirmedCommand, onOpenSta
             tone={bridge.sidecarReady ? "success" : "attention"}
             dot
           />
-          <StatusPill icon={Wifi} label={t(bridge.connectedPeers.size > 0 ? "table.direct" : "table.waitingOpponent")} />
+          <StatusPill
+            icon={Wifi}
+            label={t(opponentConnected ? "table.opponentsConnected" : "table.waitingOpponent")}
+          />
           <StatusPill icon={ShieldCheck} label={proofLabel} tone="success" />
         </div>
 

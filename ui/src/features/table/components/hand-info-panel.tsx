@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import type { BridgeSnapshot } from "../../../core/bridge/contracts";
 import { useI18n } from "../../../core/i18n/use-i18n";
 import { Button } from "../../../shared/ui/button";
+import { hasConfirmedOpponent } from "../model/table-presence";
 
 interface HandInfoPanelProps {
   readonly bridge: BridgeSnapshot;
@@ -12,6 +13,7 @@ interface HandInfoPanelProps {
 export function HandInfoPanel({ bridge, onClose }: HandInfoPanelProps) {
   const { t } = useI18n();
   const hand = bridge.hand;
+  const opponentConnected = hasConfirmedOpponent(bridge);
   const proofValue =
     hand.phase === "settled" || hand.phase === "receipt_consensus" || hand.phase === "between_hands"
       ? t("handInfo.proofSealed")
@@ -39,7 +41,7 @@ export function HandInfoPanel({ bridge, onClose }: HandInfoPanelProps) {
     {
       icon: RadioTower,
       label: t("handInfo.transport"),
-      value: t(bridge.connectedPeers.size > 0 ? "handInfo.direct" : "handInfo.waitingConnection"),
+      value: t(opponentConnected ? "handInfo.connected" : "handInfo.waitingConnection"),
       tone: "text-[var(--ink)]",
     },
     {

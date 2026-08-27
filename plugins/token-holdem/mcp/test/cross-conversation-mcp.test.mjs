@@ -131,6 +131,16 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
       reopened.structuredContent?.current_state?.identity?.player_id,
       identityEvent.player_id,
     );
+    assert.equal(
+      reopened.structuredContent?.current_state?.latest_sequence,
+      reopened.structuredContent?.latest_sequence,
+    );
+    assert.equal(
+      reopened.structuredContent?.current_state?.events?.some(
+        (entry) => entry.event?.type === "pool_joined",
+      ),
+      true,
+    );
   } finally {
     await closeMcpSession(firstSession);
     await closeMcpSession(secondSession);
