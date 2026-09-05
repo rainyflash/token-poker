@@ -63,6 +63,52 @@ function Resolve-CodexCliCommandPath {
     return $null
 }
 
+function Get-CodexPluginCommandStatus {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$ExecutablePath,
+        [scriptblock]$CommandRunner = {
+            param([string]$CommandPath, [string[]]$Arguments)
+            $originalPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $commandOutput = @(& $CommandPath @Arguments 2>&1)
+                $exitCode = if ($null -eq $LASTEXITCODE) { -1 } else { [int]$LASTEXITCODE }
+                return [pscustomobject]@{
+                    ExitCode = $exitCode
+                    Output = ($commandOutput -join "`n")
+                }
+            }
+            finally {
+                $ErrorActionPreference = $originalPreference
+            }
+        }
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+        return [pscustomobject]@{ Usable = $false; Detail = '未找到 Codex 命令。' }
+    }
+
+    foreach ($probeCommand in @('plugin marketplace list', 'plugin list')) {
+        try {
+            $probeResult = & $CommandRunner $ExecutablePath ($probeCommand -split ' ')
+            if ($probeResult.ExitCode -ne 0) {
+                return [pscustomobject]@{
+                    Usable = $false
+                    Detail = "$probeCommand 失败，退出码 $($probeResult.ExitCode)：$($probeResult.Output)"
+                }
+            }
+        }
+        catch {
+            return [pscustomobject]@{
+                Usable = $false
+                Detail = "$probeCommand 无法执行：$($_.Exception.Message)"
+            }
+        }
+    }
+    return [pscustomobject]@{ Usable = $true; Detail = '' }
+}
+
 function Get-DefaultCodexDesktopPaths {
     $paths = [System.Collections.Generic.List[string]]::new()
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {

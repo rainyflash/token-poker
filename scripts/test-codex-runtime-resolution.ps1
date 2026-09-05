@@ -54,6 +54,50 @@ try {
         -Expected (Resolve-Path -LiteralPath $cliPath).Path `
         -Message 'The PATH-backed Codex command was not resolved.'
 
+    $probeCalls = [System.Collections.Generic.List[string]]::new()
+    $oldCliStatus = Get-CodexPluginCommandStatus -ExecutablePath $cliPath -CommandRunner {
+        param([string]$CommandPath, [string[]]$Arguments)
+        $probeCalls.Add(($Arguments -join ' '))
+        return [pscustomobject]@{
+            ExitCode = $(if ($Arguments[0] -eq '--version') { 0 } else { 1 })
+            Output = '无法解析新版配置中的 model_reasoning_effort=max'
+        }
+    }
+    Assert-True -Condition (-not $oldCliStatus.Usable) -Message '不能仅凭版本命令成功接受旧 CLI。'
+    Assert-Equal -Actual $probeCalls[0] -Expected 'plugin marketplace list' -Message '必须探测真实的插件读取能力。'
+    Assert-True -Condition ($oldCliStatus.Detail.Contains('model_reasoning_effort=max')) -Message '必须保留探测失败原因。'
+
+    $probeCalls.Clear()
+    $currentCliStatus = Get-CodexPluginCommandStatus -ExecutablePath $cliPath -CommandRunner {
+        param([string]$CommandPath, [string[]]$Arguments)
+        $probeCalls.Add(($Arguments -join ' '))
+        return [pscustomobject]@{ ExitCode = 0; Output = '' }
+    }
+    Assert-True -Condition $currentCliStatus.Usable -Message '兼容 CLI 应可用。'
+    Assert-Equal -Actual ($probeCalls -join ',') -Expected 'plugin marketplace list,plugin list' -Message '必须同时检查市场和插件列表命令。'
+
+    $partialCliStatus = Get-CodexPluginCommandStatus -ExecutablePath $cliPath -CommandRunner {
+        param([string]$CommandPath, [string[]]$Arguments)
+        return [pscustomobject]@{
+            ExitCode = $(if ($Arguments.Count -eq 3) { 0 } else { 2 })
+            Output = '插件列表命令不可用'
+        }
+    }
+    Assert-True -Condition (-not $partialCliStatus.Usable) -Message '只有市场列表可用的 CLI 不应通过。'
+
+    $missingCliStatus = Get-CodexPluginCommandStatus -ExecutablePath $null -CommandRunner {
+        throw '缺少路径时不应尝试执行命令。'
+    }
+    Assert-True -Condition (-not $missingCliStatus.Usable) -Message '缺少 CLI 应触发桌面端回退。'
+    $blockedCliStatus = Get-CodexPluginCommandStatus -ExecutablePath $cliPath -CommandRunner {
+        throw '访问被拒绝'
+    }
+    Assert-True -Condition (-not $blockedCliStatus.Usable) -Message '执行受限的 CLI 应触发回退。'
+    Assert-True -Condition ($blockedCliStatus.Detail.Contains('访问被拒绝')) -Message '应保留执行异常。'
+    $nativeProbeStatus = Get-CodexPluginCommandStatus -ExecutablePath $cliPath
+    Assert-True -Condition $nativeProbeStatus.Usable -Message '默认执行器无法运行兼容命令。'
+    Assert-Equal -Actual $ErrorActionPreference -Expected 'Stop' -Message '探测不得改变调用方的错误策略。'
+
     $packageRoot = Join-Path $testRoot 'WindowsApps\OpenAI.Codex_99.0.0.0_x64'
     $desktopBinary = Join-Path $packageRoot 'app\resources\codex.exe'
     New-Item -ItemType Directory -Path (Split-Path -Parent $desktopBinary) -Force | Out-Null

@@ -197,23 +197,6 @@ function Get-ComparablePath {
     return $resolvedPath
 }
 
-function Test-CodexCommand {
-    param([Parameter(Mandatory)][string]$ExecutablePath)
-
-    $originalErrorPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        & $ExecutablePath --version *> $null
-        return $LASTEXITCODE -eq 0
-    }
-    catch {
-        return $false
-    }
-    finally {
-        $ErrorActionPreference = $originalErrorPreference
-    }
-}
-
 function Copy-VerifiedFile {
     param(
         [Parameter(Mandatory)][string]$SourceFile,
@@ -579,7 +562,9 @@ if ($null -eq $codexDesktopBinaryPath) {
     throw 'Could not locate the official App Server bundled with Codex desktop. Install or update Codex desktop and retry.'
 }
 
-if ($null -eq $codexCommandPath -or -not (Test-CodexCommand -ExecutablePath $codexCommandPath)) {
+$codexCommandStatus = Get-CodexPluginCommandStatus -ExecutablePath $codexCommandPath
+if (-not $codexCommandStatus.Usable) {
+    Write-Output '现有 Codex 命令无法管理插件，正在使用桌面端自带程序。'
     $bootstrapBaseDirectory = if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         Join-Path $env:LOCALAPPDATA 'TokenPoker\installer-runtime'
     }
@@ -591,9 +576,10 @@ if ($null -eq $codexCommandPath -or -not (Test-CodexCommand -ExecutablePath $cod
         -BaseDirectory $bootstrapBaseDirectory
     $bootstrapDirectory = $bootstrap.DirectoryPath
     $codexCommandPath = $bootstrap.CommandPath
+    $codexCommandStatus = Get-CodexPluginCommandStatus -ExecutablePath $codexCommandPath
 }
-if (-not (Test-CodexCommand -ExecutablePath $codexCommandPath)) {
-    throw 'The official Codex desktop executable could not start from the installer workspace.'
+if (-not $codexCommandStatus.Usable) {
+    throw "桌面端自带 Codex 程序仍无法管理插件：$($codexCommandStatus.Detail)"
 }
 
 if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
