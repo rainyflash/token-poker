@@ -34,20 +34,26 @@ pub enum SidecarCommand {
     CancelPublicPool,
     EnsureIdentity {
         request_id: Option<String>,
+        expected_account_fingerprint: String,
         recovery_secret: String,
         device_label: String,
     },
     CreateIdentity {
+        request_id: Option<String>,
+        expected_account_fingerprint: String,
         recovery_secret: String,
         device_label: String,
     },
     RestoreIdentity {
         request_id: Option<String>,
+        expected_account_fingerprint: String,
         recovery_envelope: String,
         recovery_secret: String,
         device_label: String,
     },
     RestoreRemoteIdentity {
+        request_id: Option<String>,
+        expected_account_fingerprint: String,
         recovery_secret: String,
         device_label: String,
     },
@@ -68,6 +74,8 @@ pub enum SidecarCommand {
         address: String,
     },
     SubmitAction {
+        request_id: Option<String>,
+        expected: HandActionPrecondition,
         action: String,
         amount: Option<u64>,
     },
@@ -75,6 +83,30 @@ pub enum SidecarCommand {
         request_id: Option<String>,
     },
     Shutdown,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandActionPrecondition {
+    pub table_id: String,
+    pub hand_number: u64,
+    pub sequence: u64,
+    pub public_state_hash: String,
+}
+
+impl HandActionPrecondition {
+    pub fn matches(
+        &self,
+        table_id: &str,
+        hand_number: u64,
+        sequence: u64,
+        public_state_hash: &str,
+    ) -> bool {
+        self.table_id == table_id
+            && self.hand_number == hand_number
+            && self.sequence == sequence
+            && self.public_state_hash == public_state_hash
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -117,7 +149,10 @@ impl SidecarCommand {
     pub fn request_id(&self) -> Option<&str> {
         match self {
             Self::EnsureIdentity { request_id, .. }
+            | Self::CreateIdentity { request_id, .. }
             | Self::RestoreIdentity { request_id, .. }
+            | Self::RestoreRemoteIdentity { request_id, .. }
+            | Self::SubmitAction { request_id, .. }
             | Self::LeaveTable { request_id } => request_id.as_deref(),
             _ => None,
         }
@@ -164,13 +199,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn 下注必须携带完整状态条件且所有条件参与匹配() {
+        assert!(decode_command_line(r#"{"type":"submit_action","action":"call"}"#).is_err());
+        let expected = HandActionPrecondition {
+            table_id: "table-a".to_owned(),
+            hand_number: 3,
+            sequence: 7,
+            public_state_hash: "hash-a".to_owned(),
+        };
+        assert!(expected.matches("table-a", 3, 7, "hash-a"));
+        assert!(!expected.matches("table-b", 3, 7, "hash-a"));
+        assert!(!expected.matches("table-a", 4, 7, "hash-a"));
+        assert!(!expected.matches("table-a", 3, 8, "hash-a"));
+        assert!(!expected.matches("table-a", 3, 7, "hash-b"));
+    }
+
+    #[test]
     fn 命令解码接受合法消息并拒绝超长行() {
         let command =
             decode_command_line(r#"{"type":"sync_statistics"}"#).expect("合法命令必须能被解码");
         assert!(matches!(command, SidecarCommand::SyncStatistics));
 
         let ensure_identity = decode_command_line(
-            r#"{"type":"ensure_identity","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
+            r#"{"type":"ensure_identity","expected_account_fingerprint":"account-a","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
         )
         .expect("自动确保身份命令必须能被解码");
         assert!(matches!(
@@ -179,7 +230,7 @@ mod tests {
         ));
 
         let correlated_identity = decode_command_line(
-            r#"{"type":"ensure_identity","request_id":"7c98e82f-55fd-45e4-9a62-bd26dcdebb18","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
+            r#"{"type":"ensure_identity","expected_account_fingerprint":"account-a","request_id":"7c98e82f-55fd-45e4-9a62-bd26dcdebb18","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
         )
         .expect("带请求 ID 的身份命令必须能被解码");
         assert_eq!(
@@ -188,7 +239,7 @@ mod tests {
         );
 
         let correlated_restore = decode_command_line(
-            r#"{"type":"restore_identity","request_id":"332865b3-c77c-474f-a60e-263fe687540e","recovery_envelope":"THR1-envelope","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
+            r#"{"type":"restore_identity","expected_account_fingerprint":"account-a","request_id":"332865b3-c77c-474f-a60e-263fe687540e","recovery_envelope":"THR1-envelope","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
         )
         .expect("带请求 ID 的身份恢复命令必须能被解码");
         assert_eq!(
@@ -207,7 +258,7 @@ mod tests {
 
         assert!(matches!(
             decode_command_line(
-                r#"{"type":"ensure_identity","request_id":"not-a-uuid","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
+                r#"{"type":"ensure_identity","expected_account_fingerprint":"account-a","request_id":"not-a-uuid","recovery_secret":"abcdefghijkl","device_label":"Windows 工作站"}"#,
             ),
             Err(SidecarCommandError::InvalidRequestId)
         ));

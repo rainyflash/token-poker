@@ -240,6 +240,7 @@ async function preparePlayers(players, namespace) {
   players.forEach((player, index) => {
     player.send({
       type: "create_identity",
+      expected_account_fingerprint: player.latest("token_snapshot_accepted").account_fingerprint,
       recovery_secret: `token-poker-${namespace}-safe-leave-player-${String(index + 1)}`,
       device_label: `安全离桌设备 ${String(index + 1)}`,
     });

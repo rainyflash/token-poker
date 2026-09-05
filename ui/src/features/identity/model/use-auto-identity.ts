@@ -8,6 +8,7 @@ import { useI18n } from "../../../core/i18n/use-i18n";
 import { ensurePlayerIdentity } from "./ensure-player-identity";
 
 export interface RecoveryKit {
+  readonly playerId: string;
   readonly accountFingerprint: string;
   readonly recoverySecret: string;
   readonly recoveryEnvelope: string | null;
@@ -19,6 +20,8 @@ interface AutoIdentityState {
 }
 
 interface RecoverySeed {
+  readonly recoveryEnvelope: string;
+  readonly playerId: string;
   readonly accountFingerprint: string;
   readonly recoverySecret: string;
 }
@@ -50,6 +53,8 @@ export function useAutoIdentity(
   } | null>(null);
   const [recoverySeed, setRecoverySeed] = useState<RecoverySeed | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fingerprint = bridge.accountBinding?.accountFingerprint ?? null;
+  const playerId = bridge.identity?.playerId ?? null;
 
   useEffect(
     () => () => {
@@ -60,7 +65,6 @@ export function useAutoIdentity(
   );
 
   useEffect(() => {
-    const fingerprint = bridge.accountBinding?.accountFingerprint ?? null;
     if (
       activeAttempt.current !== null &&
       activeAttempt.current.fingerprint !== fingerprint
@@ -69,7 +73,7 @@ export function useAutoIdentity(
       activeAttempt.current = null;
     }
     if (
-      bridge.identity !== null ||
+      playerId !== null ||
       !bridge.sidecarReady ||
       bridge.officialUsage.phase !== "ready" ||
       fingerprint === null ||
@@ -83,6 +87,7 @@ export function useAutoIdentity(
     const recoverySecret = generateRecoverySecret();
     const command = {
       type: "ensure_identity",
+      expected_account_fingerprint: fingerprint,
       recovery_secret: recoverySecret,
       device_label: defaultDeviceLabel(
         t("identity.windowsWorkstation"),
@@ -99,21 +104,20 @@ export function useAutoIdentity(
           return;
         }
         setError(null);
-        setRecoverySeed({
+        setRecoverySeed(outcome.identity.recoverySecretConfirmed ? {
+          recoveryEnvelope: outcome.identity.recoveryEnvelope,
+          playerId: outcome.identity.playerId,
           accountFingerprint: fingerprint,
           recoverySecret,
-        });
+        } : null);
       },
     );
-  }, [bridge.accountBinding, bridge.identity, bridge.officialUsage.phase, bridge.sidecarReady, sendConfirmedCommand, t]);
+  }, [fingerprint, playerId, bridge.officialUsage.phase, bridge.sidecarReady, sendConfirmedCommand, t]);
 
   const recoveryKit =
-    recoverySeed === null
+    recoverySeed === null || recoverySeed.playerId !== playerId || recoverySeed.accountFingerprint !== fingerprint
       ? null
-      : {
-          ...recoverySeed,
-          recoveryEnvelope: bridge.identity?.recoveryEnvelope ?? null,
-        };
+      : recoverySeed;
 
   return { recoveryKit, error };
 }

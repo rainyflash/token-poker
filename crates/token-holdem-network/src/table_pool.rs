@@ -14,8 +14,9 @@ use token_holdem_identity::{
     DeviceIdentity,
 };
 
-const POOL_TICKET_DOMAIN: &[u8] = b"token-holdem/pool-ticket/v1\0";
-const TABLE_ADVERTISEMENT_DOMAIN: &[u8] = b"token-holdem/table-advertisement/v1\0";
+const POOL_TICKET_DOMAIN: &[u8] = b"token-holdem/pool-ticket/v2\0";
+const TABLE_ADVERTISEMENT_DOMAIN: &[u8] = b"token-holdem/table-advertisement/v2\0";
+const POOL_DOCUMENT_VERSION: u8 = 2;
 const MAX_TICKET_LIFETIME_MS: u64 = 60 * 60 * 1_000;
 const MAX_ADVERTISEMENT_LIFETIME_MS: u64 = 30_000;
 
@@ -75,7 +76,7 @@ impl PoolTicket {
             created_at_unix_ms,
             expires_at_unix_ms,
         )?;
-        let version = 1;
+        let version = POOL_DOCUMENT_VERSION;
         let player_id = certificate.player_id();
         let device_public_key = certificate.device_public_key();
         let unsigned = canonical_ticket_bytes(
@@ -113,7 +114,7 @@ impl PoolTicket {
     }
 
     pub fn verify_at(&self, now_unix_ms: u64) -> Result<(), TablePoolProtocolError> {
-        if self.version != 1 {
+        if self.version != POOL_DOCUMENT_VERSION {
             return Err(TablePoolProtocolError::UnsupportedTicketVersion(
                 self.version,
             ));
@@ -275,7 +276,7 @@ impl TableAdvertisement {
             created_at_unix_ms,
             expires_at_unix_ms,
         )?;
-        let version = 1;
+        let version = POOL_DOCUMENT_VERSION;
         let signer_player_id = certificate.player_id();
         let signer_device_public_key = certificate.device_public_key();
         let unsigned = canonical_advertisement_bytes(
@@ -325,7 +326,7 @@ impl TableAdvertisement {
     }
 
     pub fn verify_at(&self, now_unix_ms: u64) -> Result<(), TablePoolProtocolError> {
-        if self.version != 1 {
+        if self.version != POOL_DOCUMENT_VERSION {
             return Err(TablePoolProtocolError::UnsupportedAdvertisementVersion(
                 self.version,
             ));
@@ -761,6 +762,24 @@ mod tests {
             fixture.certificate.clone(),
         )
         .expect("测试广告应当签发成功")
+    }
+
+    #[test]
+    fn 旧牌规的票据与广告不得进入新牌局() {
+        let mut fixture = fixture(1, 1_000_000);
+        let mut ad = advertisement(&fixture, 1, 2, 0);
+        assert!(fixture.ticket.verify_at(3_000).is_ok());
+        assert!(ad.verify_at(3_000).is_ok());
+        fixture.ticket.version = 1;
+        ad.version = 1;
+        assert!(matches!(
+            fixture.ticket.verify_at(3_000),
+            Err(TablePoolProtocolError::UnsupportedTicketVersion(1))
+        ));
+        assert!(matches!(
+            ad.verify_at(3_000),
+            Err(TablePoolProtocolError::UnsupportedAdvertisementVersion(1))
+        ));
     }
 
     #[test]

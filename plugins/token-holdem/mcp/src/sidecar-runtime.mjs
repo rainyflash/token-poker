@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createConnection } from "node:net";
 import { createInterface } from "node:readline";
@@ -44,6 +45,7 @@ export class SidecarRuntime {
   #events = [];
   #sessionProjection = new SessionEventProjection();
   #sequence = 0;
+  #streamId = randomUUID();
   #eventSignal = new EventEmitter();
   #launchPlan = null;
   #tokenSnapshot = null;
@@ -74,6 +76,7 @@ export class SidecarRuntime {
 
   get currentState() {
     return Object.freeze({
+      stream_id: this.#streamId,
       identity: this.#identitySnapshot,
       latest_sequence: this.#sequence,
       events: this.#sessionProjection.snapshot(),
@@ -99,17 +102,24 @@ export class SidecarRuntime {
     const event = await this.#sendConfirmedCommand(
       command,
       requestId,
-      IDENTITY_ACK_TIMEOUT_MS,
-      (candidate) =>
-        candidate.type === "identity_ready" ||
-        (candidate.type === "command_confirmed" &&
-          (candidate.command_type === "ensure_identity" ||
-            candidate.command_type === "restore_identity")),
+      command.type === "restore_remote_identity" ? 25_000 : IDENTITY_ACK_TIMEOUT_MS,
+      (candidate) => candidate.type === "identity_ready",
       "牌局内核未在超时前确认玩家身份",
     );
-    const identity = parseIdentitySnapshot(event) ?? this.#identitySnapshot;
-    if (identity === null) throw new Error("牌局内核返回了无效的玩家身份确认");
-    return identity;
+    const identity = parseIdentitySnapshot(event);
+    if (identity === null || typeof event.recovery_secret_confirmed !== "boolean" ||
+        identity.account_fingerprint !== command.expected_account_fingerprint) {
+      throw new Error("牌局内核返回了无效或账户不匹配的玩家身份确认");
+    }
+    return { player_id: identity.player_id, account_fingerprint: identity.account_fingerprint,
+      recovery_envelope: identity.recovery_envelope,
+      recovery_secret_confirmed: event.recovery_secret_confirmed };
+  }
+
+  async submitAction(command, requestId) {
+    await this.#sendConfirmedCommand(command, requestId, COMMAND_ACK_TIMEOUT_MS,
+      (candidate) => candidate.type === "command_confirmed" && candidate.command_type === "submit_action",
+      "牌局内核未在超时前确认动作；请刷新牌桌确认结果");
   }
 
   async leaveTable(command, requestId) {
@@ -381,6 +391,7 @@ export class SidecarRuntime {
       const identity = parseIdentitySnapshot(event);
       if (identity !== null) this.#identitySnapshot = identity;
     }
+    if (event.type === "identity_cleared") this.#identitySnapshot = null;
     if (event.type === "token_snapshot_accepted") {
       const {
         lifetime_tokens: lifetimeTokens,
@@ -396,6 +407,8 @@ export class SidecarRuntime {
         typeof peerVerifiable === "boolean"
       ) {
         this.#tokenSnapshot = Object.freeze({
+          account_fingerprint: accountFingerprint,
+          peer_verifiable: peerVerifiable,
           lifetime_tokens: lifetimeTokens,
           username: typeof event.username === "string" ? event.username : null,
           display_name: typeof event.display_name === "string" ? event.display_name : null,
@@ -647,6 +660,7 @@ function parseIdentitySnapshot(value) {
     value === null ||
     typeof value !== "object" ||
     typeof value.player_id !== "string" ||
+    typeof value.account_fingerprint !== "string" || value.account_fingerprint.length === 0 ||
     value.player_id.length === 0 ||
     typeof value.device_public_key !== "string" ||
     value.device_public_key.length === 0 ||
@@ -662,6 +676,7 @@ function parseIdentitySnapshot(value) {
     return null;
   }
   return Object.freeze({
+    account_fingerprint: value.account_fingerprint,
     player_id: value.player_id,
     device_public_key: value.device_public_key,
     device_label: value.device_label,

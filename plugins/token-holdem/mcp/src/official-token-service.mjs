@@ -25,7 +25,12 @@ export class OfficialTokenService {
   }
 
   get snapshot() {
-    return this.#snapshot ?? this.#runtime.tokenSnapshot;
+    const fingerprint = this.#runtime.accountBinding?.account_fingerprint;
+    if (!fingerprint) return null;
+    const shared = this.#runtime.tokenSnapshot;
+    const cached = this.#snapshot;
+    if (cached?.account_fingerprint !== fingerprint) return shared ?? null;
+    return shared?.observed_at_unix_ms > cached.observed_at_unix_ms ? shared : cached;
   }
 
   async refresh({ force = false } = {}) {

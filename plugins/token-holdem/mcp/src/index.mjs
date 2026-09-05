@@ -184,14 +184,14 @@ registerAppTool(
     }
     const beforeSequence = runtime.latestSequence;
     try {
-      const status = await dispatchHostCommand(runtime, command, requestId);
+      const outcome = await dispatchHostCommand(runtime, command, requestId);
       return toolResult(
-        status === "confirmed"
+        outcome.status === "confirmed"
           ? "Table command was confirmed by the local game core."
           : "Table command was passed to the local game core.",
         {
           ...payloadAfter("command", beforeSequence),
-          command_result: commandResult(requestId, status),
+          command_result: { ...commandResult(requestId, outcome.status), ...outcome },
         },
       );
     } catch (error) {

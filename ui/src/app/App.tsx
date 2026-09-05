@@ -42,7 +42,6 @@ export function App() {
       primaryContent = (
         <TableView
           bridge={bridge}
-          sendCommand={sendCommand}
           sendConfirmedCommand={sendConfirmedCommand}
           onOpenStatistics={() => openSubview("statistics")}
         />
@@ -71,6 +70,7 @@ export function App() {
         bridge={bridge}
         recoveryKit={autoIdentity.recoveryKit}
         autoIdentityError={autoIdentity.error}
+        sendConfirmedCommand={sendConfirmedCommand}
         sendCommand={sendCommand}
       />
     ) : null;

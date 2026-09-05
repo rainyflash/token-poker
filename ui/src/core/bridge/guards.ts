@@ -289,6 +289,7 @@ export function parseSidecarEvent(value: unknown): SidecarEvent | null {
     }
     case "identity_ready":
       return isString(value.player_id) &&
+        isString(value.account_fingerprint) &&
         isString(value.device_public_key) &&
         isString(value.device_label) &&
         isNonNegativeSafeInteger(value.certificate_expires_at_unix_ms) &&
@@ -297,6 +298,7 @@ export function parseSidecarEvent(value: unknown): SidecarEvent | null {
         ? {
             type: value.type,
             player_id: value.player_id,
+            account_fingerprint: value.account_fingerprint,
             device_public_key: value.device_public_key,
             device_label: value.device_label,
             certificate_expires_at_unix_ms: value.certificate_expires_at_unix_ms,
@@ -304,6 +306,8 @@ export function parseSidecarEvent(value: unknown): SidecarEvent | null {
             remote_replicas: value.remote_replicas,
           }
         : null;
+    case "identity_cleared":
+      return { type: value.type };
     case "listen_address":
       return isString(value.address) ? { type: value.type, address: value.address } : null;
     case "sidecar_restarting":
@@ -644,6 +648,7 @@ export function parseSidecarEvent(value: unknown): SidecarEvent | null {
         : null;
     case "hand_state":
       return isString(value.table_id) &&
+        isString(value.public_state_hash) && /^[0-9a-f]{64}$/u.test(value.public_state_hash) &&
         isPositiveSafeInteger(value.hand_number) &&
         isNonNegativeSafeInteger(value.sequence) &&
         isString(value.street) &&
@@ -666,6 +671,7 @@ export function parseSidecarEvent(value: unknown): SidecarEvent | null {
             table_id: value.table_id,
             hand_number: value.hand_number,
             sequence: value.sequence,
+            public_state_hash: value.public_state_hash,
             street: value.street,
             pot: value.pot,
             current_bet: value.current_bet,

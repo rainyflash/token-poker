@@ -25,7 +25,7 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
     LOCALAPPDATA: isolatedLocalAppData,
     TOKEN_HOLDEM_RUNTIME_PATH: join(pluginRoot, "bin", "token-holdem-runtime.exe"),
     TOKEN_HOLDEM_SIDECAR_PATH: join(pluginRoot, "bin", "token-holdem-sidecar.exe"),
-    TOKEN_HOLDEM_RUNTIME_PIPE: String.raw`\\.\pipe\token-holdem-runtime-v6-${randomBytes(12).toString("hex")}`,
+    TOKEN_HOLDEM_RUNTIME_PIPE: String.raw`\\.\pipe\token-holdem-runtime-v7-${randomBytes(12).toString("hex")}`,
     TOKEN_HOLDEM_RUNTIME_IDLE_TIMEOUT_SECONDS: "30",
     TOKEN_HOLDEM_CODEX_APP_SERVER_FIXTURE: join(
       mcpRoot,
@@ -59,6 +59,7 @@ test("新对话 MCP 工具恢复旧对话的共享运行时状态", async () => 
         request_id: randomUUID(),
         command: {
           type: "ensure_identity",
+          expected_account_fingerprint: synchronized.structuredContent.account_binding.account_fingerprint,
           recovery_secret: "跨任务恢复测试专用口令-abcdefghijkl",
           device_label: "测试设备",
         },

@@ -1,5 +1,6 @@
 const SLOT = Object.freeze({
   identity: "identity",
+  statistics: "statistics",
   pool: "pool",
   poolDirectory: "pool-directory",
   poolPhase: "pool-phase",
@@ -62,7 +63,17 @@ export class SessionEventProjection {
 
     switch (eventType) {
       case "identity_ready":
+        if (this.#slots.get(SLOT.identity)?.event.player_id !== entry.event.player_id) {
+          this.#slots.delete(SLOT.statistics);
+        }
         this.#slots.set(SLOT.identity, entry);
+        break;
+      case "identity_cleared":
+        this.#slots.delete(SLOT.identity);
+        this.#slots.delete(SLOT.statistics);
+        break;
+      case "statistics_updated":
+        this.#slots.set(SLOT.statistics, entry);
         break;
       case "pool_joined":
         this.#clearPool();

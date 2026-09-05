@@ -12,7 +12,7 @@ test("共享运行时按插件版本和安装路径隔离", () => {
 
     assert.equal(current, same);
     assert.notEqual(current, previous);
-    assert.match(current, /^\\\\\.\\pipe\\token-holdem-runtime-v6-[0-9a-f]{24}$/u);
+    assert.match(current, /^\\\\\.\\pipe\\token-holdem-runtime-v7-[0-9a-f]{24}$/u);
   } finally {
     if (originalOverride === undefined) delete process.env.TOKEN_HOLDEM_RUNTIME_PIPE;
     else process.env.TOKEN_HOLDEM_RUNTIME_PIPE = originalOverride;

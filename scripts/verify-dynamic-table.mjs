@@ -146,6 +146,7 @@ async function main() {
     players.forEach((player, index) => {
       player.send({
         type: "create_identity",
+        expected_account_fingerprint: player.latest("token_snapshot_accepted").account_fingerprint,
         recovery_secret: `token-holdem-dynamic-table-player-${String(index + 1)}`,
         device_label: `动态牌桌玩家 ${String(index + 1)}`,
       });
@@ -312,6 +313,8 @@ async function playHand(players, handNumber) {
     const expectedSequence = actorState.sequence + 1;
     actor.send({
       type: "submit_action",
+      expected: { table_id: actorState.table_id, hand_number: actorState.hand_number,
+        sequence: actorState.sequence, public_state_hash: actorState.public_state_hash },
       action: actorState.to_call === 0 ? "check" : "call",
     });
     actionCount += 1;

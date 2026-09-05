@@ -359,6 +359,58 @@ test("事件轮询延迟时仍立即转发当前牌桌与手牌投影", async ()
   await harness.app.onteardown({}, {});
 });
 
+test("新事件流重置水位且旧流迟到结果不能覆盖账户和空快照", async (context) => {
+  const harness = createHarness();
+  context.after(() => harness.app.onteardown({}, {}));
+  await harness.ready();
+  const publish = (stream, sequence, account) => harness.app.emit("toolresult", { structuredContent: {
+    current_state: { stream_id: stream, latest_sequence: sequence, identity: null, events: [] },
+    account_binding: { account_fingerprint: account, peer_verifiable: false },
+  } });
+  publish("old", 99, "a");
+  publish("new", 2, "b");
+  publish("old", 100, "a");
+  publish("new", 1, "stale-b");
+  assert.equal(harness.state.dispatchedEvents.findLast((event) => event.type === "token-holdem:account-binding").detail.account_fingerprint, "b");
+  assert.equal(harness.state.dispatchedEvents.findLast((event) => event.type === "token-holdem:current-state").detail.stream_id, "new");
+});
+
+test("增量事件先回放，再以完整空快照清除历史房间", async (context) => {
+  let firstPoll = true;
+  const harness = createHarness({ callServerTool(params, requestOptions) {
+    if (params.name === "token_holdem_poll" && firstPoll) {
+      firstPoll = false;
+      return Promise.resolve({ structuredContent: { latest_sequence: 5,
+        events: [{ sequence: 4, event: { type: "room_entered", table_id: "old-room" } }],
+        current_state: { stream_id: "current", latest_sequence: 5, identity: null, events: [] },
+      } });
+    }
+    return new Promise((_resolve, reject) => requestOptions.signal.addEventListener("abort", () => reject(requestOptions.signal.reason), { once: true }));
+  } });
+  context.after(() => harness.app.onteardown({}, {}));
+  await harness.ready();
+  const events = harness.state.dispatchedEvents;
+  const oldRoomIndex = events.findIndex((event) => event.type === "token-holdem:sidecar" && event.detail.type === "room_entered");
+  const currentIndex = events.findIndex((event) => event.type === "token-holdem:current-state");
+  assert.ok(oldRoomIndex >= 0 && currentIndex > oldRoomIndex);
+});
+
+test("动作与两种恢复命令均拒绝仅入队的回执", async (context) => {
+  const harness = createHarness({ callServerTool(params, requestOptions) {
+    if (params.name === "token_holdem_command") return Promise.resolve({ structuredContent: {
+      command_result: { request_id: params.arguments.request_id, status: "accepted" },
+    } });
+    return new Promise((_resolve, reject) => requestOptions.signal.addEventListener("abort", () => reject(requestOptions.signal.reason), { once: true }));
+  } });
+  context.after(() => harness.app.onteardown({}, {}));
+  await harness.ready();
+  for (const type of ["submit_action", "restore_identity", "restore_remote_identity"]) {
+    const result = await harness.command(JSON.stringify({ type }));
+    assert.equal(result.ok, false);
+    assert.match(result.error, /did not confirm/u);
+  }
+});
+
 test("身份命令只在请求 ID 对应的内核确认返回后报告成功", async () => {
   let capturedRequestId = null;
   const harness = createHarness({
@@ -370,6 +422,8 @@ test("身份命令只在请求 ID 对应的内核确认返回后报告成功", a
             command_result: {
               request_id: capturedRequestId,
               status: "confirmed",
+              identity_confirmation: { player_id: "player-confirmed", account_fingerprint: "account-a",
+                recovery_secret_confirmed: true, recovery_envelope: "THR1-confirmed" },
               error: null,
             },
             current_state: {
@@ -403,6 +457,7 @@ test("身份命令只在请求 ID 对应的内核确认返回后报告成功", a
 
   const outcome = await harness.command(JSON.stringify({
     type: "ensure_identity",
+    expected_account_fingerprint: "account-a",
     recovery_secret: "fixed-secret",
     device_label: "测试设备",
   }));

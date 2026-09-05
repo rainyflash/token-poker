@@ -10,8 +10,9 @@ use token_holdem_identity::{
     DeviceIdentity,
 };
 
-const FRIEND_ROOM_DOMAIN: &[u8] = b"token-holdem/friend-room-invite/v2\0";
-const ROOM_ID_DOMAIN: &[u8] = b"token-holdem/friend-room-id/v2\0";
+const FRIEND_ROOM_DOMAIN: &[u8] = b"token-holdem/friend-room-invite/v3\0";
+const ROOM_ID_DOMAIN: &[u8] = b"token-holdem/friend-room-id/v3\0";
+const FRIEND_ROOM_VERSION: u8 = 3;
 
 pub type RoomId = TableId;
 
@@ -50,7 +51,7 @@ impl FriendRoomInvite {
             created_at_unix_ms,
             expires_at_unix_ms,
         )?;
-        let version = 2;
+        let version = FRIEND_ROOM_VERSION;
         let room_id = derive_room_id(&room_secret);
         let host_player_id = certificate.player_id();
         let host_device_public_key = certificate.device_public_key();
@@ -89,7 +90,7 @@ impl FriendRoomInvite {
     }
 
     pub fn verify_at(&self, now_unix_ms: u64) -> Result<(), FriendRoomInviteError> {
-        if self.version != 2 {
+        if self.version != FRIEND_ROOM_VERSION {
             return Err(FriendRoomInviteError::UnsupportedVersion(self.version));
         }
         validate_fields(
@@ -312,5 +313,11 @@ mod tests {
             cbor4ii::serde::from_slice(&encoded).expect("另一台设备应能解码 CBOR 邀请");
         assert_eq!(decoded, invite);
         assert!(decoded.verify_at(3_000).is_ok());
+        let mut old_rules = decoded;
+        old_rules.version = 2;
+        assert!(matches!(
+            old_rules.verify_at(3_000),
+            Err(FriendRoomInviteError::UnsupportedVersion(2))
+        ));
     }
 }

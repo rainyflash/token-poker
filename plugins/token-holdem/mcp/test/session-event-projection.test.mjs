@@ -196,3 +196,14 @@ test("上一手的迟到事件不会清空当前手牌投影", () => {
     ],
   );
 });
+test("身份切换会移除旧身份与旧战绩投影", () => {
+  const projection = new SessionEventProjection();
+  projection.observe(entry(1, "identity_ready", { player_id: "a" }));
+  projection.observe(entry(2, "statistics_updated", { completed_hands: 99 }));
+  projection.observe(entry(3, "identity_cleared"));
+  assert.deepEqual(projection.snapshot(), []);
+  projection.observe(entry(4, "identity_ready", { player_id: "b" }));
+  projection.observe(entry(5, "statistics_updated", { completed_hands: 3 }));
+  projection.observe(entry(6, "identity_ready", { player_id: "c" }));
+  assert.deepEqual(projection.snapshot().map((item) => item.event.type), ["identity_ready"]);
+});

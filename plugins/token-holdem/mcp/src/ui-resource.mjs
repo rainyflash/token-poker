@@ -105,6 +105,9 @@ export function buildHostBridge(version) {
     : [];
 
   let latestSequence = 0;
+  let streamId = null;
+  let latestPayloadSequence = -1;
+  const retiredStreams = new Set();
   let eventsHydrated = false;
   let stopped = false;
   let resizeCleanup = null;
@@ -116,6 +119,10 @@ export function buildHostBridge(version) {
   let updateQueue = Promise.resolve();
   const confirmationErrors = new Map([
     ["ensure_identity", "Plugin did not confirm the identity command"],
+    ["create_identity", "Plugin did not confirm identity creation"],
+    ["restore_identity", "Plugin did not confirm identity recovery"],
+    ["restore_remote_identity", "Plugin did not confirm remote identity recovery"],
+    ["submit_action", "Plugin did not confirm the table action"],
     ["leave_table", "Plugin did not confirm the leave-table command"],
   ]);
   const sessionController = new AbortController();
@@ -302,6 +309,19 @@ export function buildHostBridge(version) {
   function consumeResult(result, eventMode = eventsHydrated ? "incremental" : "metadata") {
     if (!result || typeof result !== "object") return;
     const payload = result.structuredContent || result._meta?.widgetData;
+    const incomingStream = payload?.current_state?.stream_id;
+    if (typeof incomingStream === "string" && incomingStream !== streamId) {
+      if (retiredStreams.has(incomingStream)) return;
+      if (streamId !== null) retiredStreams.add(streamId);
+      streamId = incomingStream;
+      latestSequence = 0;
+      latestPayloadSequence = -1;
+    }
+    const payloadSequence = payload?.current_state?.latest_sequence;
+    if (Number.isSafeInteger(payloadSequence)) {
+      if (payloadSequence < latestPayloadSequence) return;
+      latestPayloadSequence = payloadSequence;
+    }
     const officialUsageError = payload && typeof payload === "object" &&
       typeof payload.official_usage_error === "string" && payload.official_usage_error.length > 0
         ? payload.official_usage_error
@@ -320,14 +340,17 @@ export function buildHostBridge(version) {
     if (payload && typeof payload === "object") {
       publishAccountBinding(payload.account_binding);
       publishUpdateStatus(payload.update_status);
-      publishCurrentState(payload.current_state);
     }
     if (result.isError) {
+      publishCurrentState(payload?.current_state);
       if (officialUsageError === null) publishWarning(resultError(result));
       return;
     }
     if (!payload || typeof payload !== "object") return;
-    if (eventMode === "metadata") return;
+    if (eventMode === "metadata") {
+      publishCurrentState(payload.current_state);
+      return;
+    }
     if (Array.isArray(payload.events)) {
       for (const entry of payload.events) {
         if (!entry || !Number.isSafeInteger(entry.sequence) || entry.sequence <= latestSequence) continue;
@@ -338,6 +361,7 @@ export function buildHostBridge(version) {
     if (Number.isSafeInteger(payload.latest_sequence)) {
       latestSequence = Math.max(latestSequence, payload.latest_sequence);
     }
+    publishCurrentState(payload.current_state);
     if (payload.history_truncated === true) {
       publishWarning("Older diagnostic events were truncated; the current identity, matchmaking, room, and hand state was restored from the retained projection.");
     }
@@ -468,6 +492,18 @@ export function buildHostBridge(version) {
     }
     if (outcome.status !== "accepted" && outcome.status !== "confirmed") {
       throw new Error("Plugin returned an invalid command status");
+    }
+    if (["ensure_identity", "create_identity", "restore_identity", "restore_remote_identity"].includes(command?.type)) {
+      const identity = outcome.identity_confirmation;
+      if (!identity || typeof identity.player_id !== "string" || identity.player_id.length === 0 ||
+          typeof identity.recovery_envelope !== "string" || !identity.recovery_envelope.startsWith("THR1-") ||
+          identity.account_fingerprint !== command.expected_account_fingerprint ||
+          typeof identity.recovery_secret_confirmed !== "boolean") {
+        throw new Error("Plugin returned an invalid identity recovery confirmation");
+      }
+      return { ok: true, identity: { playerId: identity.player_id,
+        recoveryEnvelope: identity.recovery_envelope,
+        accountFingerprint: identity.account_fingerprint, recoverySecretConfirmed: identity.recovery_secret_confirmed } };
     }
     return { ok: true };
   }

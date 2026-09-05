@@ -50,6 +50,7 @@ declare global {
   var tokenHoldemCommand: ((payload: string) => Promise<CommandResult>) | undefined;
 }
 
+const PREVIEW_IDENTITY_DELAY_MS = 520;
 const PREVIEW_SNAPSHOT = Object.freeze({
   lifetimeTokens: 35_500_000_000,
   username: null,
@@ -110,6 +111,7 @@ const INITIAL_UPDATE_STATUS =
   });
 
 const EMPTY_HAND: HandSnapshot = Object.freeze({
+  publicStateHash: null,
   phase: "idle",
   tableId: null,
   handNumber: 0,
@@ -286,6 +288,9 @@ class HostBridgeStore {
   #snapshot: BridgeSnapshot = INITIAL_STATE;
   #previewPoolRun = 0;
   #currentStateSequence = -1;
+  #currentStreamId: string | null = null;
+  readonly #retiredStreams = new Set<string>();
+  #applyingProjection = false;
 
   constructor() {
     globalThis.addEventListener("token-holdem:snapshot", this.#handleTokenSnapshot);
@@ -298,11 +303,11 @@ class HostBridgeStore {
     globalThis.addEventListener("token-holdem:current-state", this.#handleCurrentState);
     globalThis.addEventListener("token-holdem:sidecar", this.#handleSidecarEvent);
     globalThis.addEventListener("token-holdem:resume", this.#handleHostResume);
-    this.#applyCurrentState(globalThis.__tokenHoldemCurrentState);
     for (const rawEvent of globalThis.__tokenHoldemBufferedSidecarEvents ?? []) {
       const event = parseSidecarEvent(rawEvent);
       if (event !== null) this.#applySidecarEvent(event);
     }
+    this.#applyCurrentState(globalThis.__tokenHoldemCurrentState);
   }
 
   readonly subscribe = (listener: Listener): (() => void) => {
@@ -372,6 +377,13 @@ class HostBridgeStore {
   async sendConfirmed(command: HostCommand): Promise<CommandResult> {
     if (this.#snapshot.mode === "preview") {
       this.#runPreviewCommand(command);
+      if (["ensure_identity", "create_identity", "restore_identity", "restore_remote_identity"].includes(command.type)) {
+        await new Promise((resolve) => globalThis.setTimeout(resolve, PREVIEW_IDENTITY_DELAY_MS));
+        const identity = this.#snapshot.identity;
+        if (identity === null) return { ok: false, error: bridgeText("bridge.commandFailed") };
+        return { ok: true, identity: { playerId: identity.playerId, accountFingerprint: identity.accountFingerprint,
+          recoveryEnvelope: identity.recoveryEnvelope, recoverySecretConfirmed: true } };
+      }
       return { ok: true };
     }
     if (typeof globalThis.tokenHoldemCommand !== "function") {
@@ -415,10 +427,25 @@ class HostBridgeStore {
     const record = value as Record<string, unknown>;
     const projection = parseCurrentStateProjection(record, parseSidecarEvent);
     if (projection !== null) {
-      if (projection.latestSequence <= this.#currentStateSequence) return;
+      if (projection.streamId !== this.#currentStreamId) {
+        if (this.#retiredStreams.has(projection.streamId)) return;
+        if (this.#currentStreamId !== null) this.#retiredStreams.add(this.#currentStreamId);
+        this.#currentStreamId = projection.streamId;
+        this.#currentStateSequence = -1;
+      }
+      if (projection.latestSequence < this.#currentStateSequence) return;
       this.#currentStateSequence = projection.latestSequence;
-      this.#applyCurrentIdentity(record.identity);
-      for (const event of projection.events) this.#applySidecarEvent(event);
+      this.#applyingProjection = true;
+      try {
+        this.#replace({ ...this.#snapshot, identity: null, pool: EMPTY_POOL, room: EMPTY_ROOM,
+          hand: EMPTY_HAND, statistics: INITIAL_STATE.statistics,
+          friendInviteCode: null, friendRoomId: null, friendRoomStatus: "idle" });
+        this.#applyCurrentIdentity(record.identity);
+        for (const event of projection.events) this.#applySidecarEvent(event);
+      } finally {
+        this.#applyingProjection = false;
+      }
+      this.#listeners.forEach((listener) => listener());
       return;
     }
     this.#applyCurrentIdentity(record.identity);
@@ -541,6 +568,7 @@ class HostBridgeStore {
         this.#replace({
           ...this.#snapshot,
           identity: {
+            accountFingerprint: event.account_fingerprint,
             playerId: event.player_id,
             devicePublicKey: event.device_public_key,
             deviceLabel: event.device_label,
@@ -550,6 +578,9 @@ class HostBridgeStore {
           },
           lastWarning: null,
         });
+        break;
+      case "identity_cleared":
+        this.#replace({ ...this.#snapshot, identity: null, statistics: INITIAL_STATE.statistics });
         break;
       case "peer_connected": {
         const connectedPeers = new Set(this.#snapshot.connectedPeers);
@@ -640,6 +671,7 @@ class HostBridgeStore {
       case "room_entered":
         this.#replace({
           ...this.#snapshot,
+          hand: this.#snapshot.hand.tableId === event.table_id ? this.#snapshot.hand : EMPTY_HAND,
           room: { ...EMPTY_ROOM, tableId: event.table_id, localRole: "joining" },
           lastWarning: null,
         });
@@ -798,6 +830,7 @@ class HostBridgeStore {
             localSeat: event.local_seat,
             board: event.board,
             sequence: event.sequence,
+            publicStateHash: event.public_state_hash,
             street: event.street,
             pot: event.pot,
             currentBet: event.current_bet,
@@ -1182,6 +1215,7 @@ class HostBridgeStore {
         });
         this.#schedulePreviewPool(this.#previewPoolRun, 2_720, {
           type: "hand_state",
+          public_state_hash: "0".repeat(64),
           table_id: "8f3c58d35e4a9db2-preview-table",
           hand_number: 1,
           sequence: 0,
@@ -1251,6 +1285,7 @@ class HostBridgeStore {
         globalThis.setTimeout(() => {
           this.#applySidecarEvent({
             type: "identity_ready",
+            account_fingerprint: PREVIEW_ACCOUNT_FINGERPRINT,
             player_id: "7ab3e9114f8924a7ce5510d23f9b8af64812cfc3f234c934dea155079b0025e",
             device_public_key: "9c71ec2da18e68f29ac3aa06b24f0ea34df182d4f4b22cc09c5aa42dce74fd31",
             device_label: command.device_label,
@@ -1258,7 +1293,7 @@ class HostBridgeStore {
             recovery_envelope: "THR1-PREVIEW-ENCRYPTED-RECOVERY-PACKAGE",
             remote_replicas: 0,
           });
-        }, 520);
+        }, PREVIEW_IDENTITY_DELAY_MS);
         break;
       case "configure_archive_nodes":
         this.#applySidecarEvent({
@@ -1438,7 +1473,7 @@ class HostBridgeStore {
 
   #replace(snapshot: BridgeSnapshot): void {
     this.#snapshot = Object.freeze(snapshot);
-    this.#listeners.forEach((listener) => listener());
+    if (!this.#applyingProjection) this.#listeners.forEach((listener) => listener());
   }
 }
 

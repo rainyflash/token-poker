@@ -44,8 +44,8 @@ use token_holdem_network::{
     TABLE_POOL_TOPIC_PREFIX, TABLE_TOPIC_PREFIX,
 };
 use token_holdem_sidecar::{
-    decode_command_line, SidecarCommand, TokenSnapshotSource, VolunteerInputs, VolunteerPolicy,
-    MAX_COMMAND_LINE_BYTES,
+    decode_command_line, HandActionPrecondition, SidecarCommand, TokenSnapshotSource,
+    VolunteerInputs, VolunteerPolicy, MAX_COMMAND_LINE_BYTES,
 };
 use tokio_util::codec::{FramedRead, LinesCodec};
 use zeroize::Zeroizing;
@@ -89,6 +89,8 @@ enum SidecarEvent {
     },
     IdentityReady {
         request_id: Option<String>,
+        account_fingerprint: String,
+        recovery_secret_confirmed: Option<bool>,
         player_id: String,
         device_public_key: String,
         device_label: String,
@@ -96,6 +98,7 @@ enum SidecarEvent {
         recovery_envelope: String,
         remote_replicas: u16,
     },
+    IdentityCleared,
     CommandFailed {
         request_id: String,
         command_type: &'static str,
@@ -167,6 +170,7 @@ struct RecentHand {
 }
 
 struct ActiveIdentity {
+    account_fingerprint: String,
     player_id: PlayerId,
     device: DeviceIdentity,
     certificate: DeviceCertificate,
@@ -177,6 +181,8 @@ struct ActiveIdentity {
 }
 
 struct PendingRemoteRestore {
+    request_id: Option<String>,
+    account_fingerprint: String,
     locator: [u8; 32],
     recovery_secret: Zeroizing<String>,
     device_label: String,
@@ -417,6 +423,7 @@ fn handle_command(
                 username.as_deref(),
                 display_name.as_deref(),
             )?;
+            reconcile_account(state, &account_fingerprint)?;
             emit(&SidecarEvent::TokenSnapshotAccepted {
                 lifetime_tokens,
                 username: username.clone(),
@@ -469,32 +476,50 @@ fn handle_command(
         }
         SidecarCommand::EnsureIdentity {
             request_id,
+            expected_account_fingerprint,
             recovery_secret,
             device_label,
         } => {
+            let account_fingerprint =
+                checked_identity_account(state, &expected_account_fingerprint)?.to_owned();
+            anyhow::ensure!(
+                state.pending_remote_restore.is_none(),
+                "正在恢复身份，请等待恢复完成"
+            );
+            let recovery_secret = Zeroizing::new(recovery_secret);
+            validate_recovery_secret(&recovery_secret)?;
             if let Some(identity) = state.identity.as_ref() {
-                emit_identity_ready(identity, request_id.as_deref())?;
+                anyhow::ensure!(
+                    identity.account_fingerprint == account_fingerprint,
+                    "玩家身份与当前 Codex 账户不一致"
+                );
+                let envelope: RecoveryEnvelope = decode_payload(&identity.recovery_payload)?;
+                let confirmed = envelope
+                    .open_for_account(&recovery_secret, &account_fingerprint)
+                    .is_ok();
+                emit_identity_ready(identity, request_id.as_deref(), Some(confirmed))?;
             } else {
-                let account_fingerprint = identity_account_fingerprint(state)?.to_owned();
-                let recovery_secret = Zeroizing::new(recovery_secret);
                 let identity = create_identity(
                     &recovery_secret,
                     &device_label,
                     &account_fingerprint,
                     unix_time_ms()?,
                 )?;
-                emit_identity_ready(&identity, request_id.as_deref())?;
+                emit_identity_ready(&identity, request_id.as_deref(), Some(true))?;
                 state.identity = Some(identity);
                 publish_identity_recovery(swarm, state)?;
                 sync_statistics(swarm, state)?;
             }
         }
         SidecarCommand::CreateIdentity {
+            request_id,
+            expected_account_fingerprint,
             recovery_secret,
             device_label,
         } => {
             ensure_identity_slot_is_empty(state)?;
-            let account_fingerprint = identity_account_fingerprint(state)?.to_owned();
+            let account_fingerprint =
+                checked_identity_account(state, &expected_account_fingerprint)?.to_owned();
             let recovery_secret = Zeroizing::new(recovery_secret);
             let identity = create_identity(
                 &recovery_secret,
@@ -502,19 +527,25 @@ fn handle_command(
                 &account_fingerprint,
                 unix_time_ms()?,
             )?;
-            emit_identity_ready(&identity, None)?;
+            emit_identity_ready(&identity, request_id.as_deref(), Some(true))?;
             state.identity = Some(identity);
             publish_identity_recovery(swarm, state)?;
             sync_statistics(swarm, state)?;
         }
         SidecarCommand::RestoreIdentity {
             request_id,
+            expected_account_fingerprint,
             recovery_envelope,
             recovery_secret,
             device_label,
         } => {
-            ensure_identity_slot_is_empty(state)?;
-            let account_fingerprint = identity_account_fingerprint(state)?.to_owned();
+            ensure_identity_replaceable(state)?;
+            anyhow::ensure!(
+                state.pending_remote_restore.is_none(),
+                "已有远端身份恢复请求正在等待响应"
+            );
+            let account_fingerprint =
+                checked_identity_account(state, &expected_account_fingerprint)?.to_owned();
             let recovery_secret = Zeroizing::new(recovery_secret);
             let identity = restore_identity(
                 &recovery_envelope,
@@ -523,29 +554,34 @@ fn handle_command(
                 &account_fingerprint,
                 unix_time_ms()?,
             )?;
-            emit_identity_ready(&identity, request_id.as_deref())?;
+            emit_identity_ready(&identity, request_id.as_deref(), Some(true))?;
             state.identity = Some(identity);
             publish_identity_recovery(swarm, state)?;
             sync_statistics(swarm, state)?;
         }
         SidecarCommand::RestoreRemoteIdentity {
+            request_id,
+            expected_account_fingerprint,
             recovery_secret,
             device_label,
         } => {
-            ensure_identity_slot_is_empty(state)?;
+            ensure_identity_replaceable(state)?;
             if state.pending_remote_restore.is_some() {
                 anyhow::bail!("已有远端身份恢复请求正在等待归档节点响应")
             }
             validate_recovery_secret(&recovery_secret)?;
-            let locator =
-                derive_recovery_locator(identity_account_fingerprint(state)?, &recovery_secret)
-                    .context("无法派生远端身份恢复定位符")?;
+            let account_fingerprint =
+                checked_identity_account(state, &expected_account_fingerprint)?.to_owned();
+            let locator = derive_recovery_locator(&account_fingerprint, &recovery_secret)
+                .context("无法派生远端身份恢复定位符")?;
+            let events = state.archive.fetch_recovery(swarm, locator)?;
             state.pending_remote_restore = Some(PendingRemoteRestore {
+                request_id,
+                account_fingerprint,
                 locator,
                 recovery_secret: Zeroizing::new(recovery_secret),
                 device_label,
             });
-            let events = state.archive.fetch_recovery(swarm, locator)?;
             process_archive_events(swarm, state, events)?;
         }
         SidecarCommand::CreateFriendRoom { level_id, buy_in } => {
@@ -565,9 +601,12 @@ fn handle_command(
             let events = state.archive.fetch_receipt(swarm, address)?;
             process_archive_events(swarm, state, events)?;
         }
-        SidecarCommand::SubmitAction { action, amount } => {
-            submit_hand_action(swarm, state, &action, amount)?
-        }
+        SidecarCommand::SubmitAction {
+            expected,
+            action,
+            amount,
+            ..
+        } => submit_hand_action(swarm, state, &expected, &action, amount)?,
         SidecarCommand::LeaveTable { .. } => leave_table(swarm, state)?,
         SidecarCommand::Shutdown => unreachable!("退出命令已在事件循环中处理"),
     }
@@ -656,6 +695,16 @@ fn publish_identity_recovery(
 }
 
 fn validate_local_buy_in(state: &RuntimeState, buy_in: u64) -> Result<()> {
+    anyhow::ensure!(
+        state.pending_remote_restore.is_none(),
+        "正在恢复身份，完成前不能进入牌桌"
+    );
+    if let Some(identity) = &state.identity {
+        anyhow::ensure!(
+            identity.account_fingerprint == identity_account_fingerprint(state)?,
+            "玩家身份与当前 Codex 账户不一致"
+        );
+    }
     let observation = state
         .token_observation
         .as_ref()
@@ -1468,6 +1517,7 @@ fn create_identity(
         envelope,
         recovery_locator,
         recovery_payload,
+        account_fingerprint,
         device_label,
         now_unix_ms,
     )
@@ -1494,6 +1544,7 @@ fn restore_identity(
         envelope,
         recovery_locator,
         recovery_payload,
+        account_fingerprint,
         device_label,
         now_unix_ms,
     )
@@ -1513,6 +1564,7 @@ fn activate_identity(
     envelope: RecoveryEnvelope,
     recovery_locator: [u8; 32],
     recovery_payload: Vec<u8>,
+    account_fingerprint: &str,
     device_label: &str,
     now_unix_ms: u64,
 ) -> Result<ActiveIdentity> {
@@ -1534,6 +1586,7 @@ fn activate_identity(
     anyhow::ensure!(decoded_envelope == envelope, "身份恢复包载荷与身份不一致");
     let recovery_envelope = encode_payload_code(RECOVERY_CODE_PREFIX, &recovery_payload);
     Ok(ActiveIdentity {
+        account_fingerprint: account_fingerprint.to_owned(),
         player_id,
         device,
         certificate,
@@ -1544,9 +1597,15 @@ fn activate_identity(
     })
 }
 
-fn emit_identity_ready(identity: &ActiveIdentity, request_id: Option<&str>) -> Result<()> {
+fn emit_identity_ready(
+    identity: &ActiveIdentity,
+    request_id: Option<&str>,
+    recovery_secret_confirmed: Option<bool>,
+) -> Result<()> {
     emit(&SidecarEvent::IdentityReady {
         request_id: request_id.map(str::to_owned),
+        account_fingerprint: identity.account_fingerprint.clone(),
+        recovery_secret_confirmed,
         player_id: identity.player_id.to_string(),
         device_public_key: identity.device.public_key().to_string(),
         device_label: identity.certificate.label().to_owned(),
@@ -1572,10 +1631,59 @@ fn identity_account_fingerprint(state: &RuntimeState) -> Result<&str> {
 }
 
 fn ensure_identity_slot_is_empty(state: &RuntimeState) -> Result<()> {
+    anyhow::ensure!(
+        state.pending_remote_restore.is_none(),
+        "正在恢复身份，请等待恢复完成"
+    );
     if state.identity.is_some() {
-        anyhow::bail!("当前进程已经载入玩家身份；为避免误覆盖，必须重启 sidecar 后再切换身份");
+        anyhow::bail!("当前进程已经载入玩家身份；请直接使用，或空闲时恢复已有身份");
     }
     Ok(())
+}
+
+fn checked_identity_account<'a>(state: &'a RuntimeState, expected: &str) -> Result<&'a str> {
+    let actual = identity_account_fingerprint(state)?;
+    anyhow::ensure!(expected == actual, "Codex 账户已切换，请刷新后重试");
+    Ok(actual)
+}
+
+fn ensure_identity_replaceable(state: &RuntimeState) -> Result<()> {
+    anyhow::ensure!(
+        !state.session.is_active()
+            && !state.hand.is_active()
+            && state.pool.local_ticket().is_none()
+            && state.pending_room_joins.is_empty(),
+        "请先取消匹配或安全离桌，再切换玩家身份或 Codex 账户"
+    );
+    Ok(())
+}
+
+fn fail_remote_restore(state: &mut RuntimeState, message: &str) -> Result<()> {
+    if let Some(pending) = state.pending_remote_restore.take() {
+        state.archive.cancel_recovery_fetch(pending.locator);
+        if let Some(request_id) = pending.request_id {
+            emit(&SidecarEvent::CommandFailed {
+                request_id,
+                command_type: "restore_remote_identity",
+                message: message.to_owned(),
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn reconcile_account(state: &mut RuntimeState, fingerprint: &str) -> Result<()> {
+    if state
+        .token_observation
+        .as_ref()
+        .is_none_or(|observation| observation.account_fingerprint == fingerprint)
+    {
+        return Ok(());
+    }
+    ensure_identity_replaceable(state)?;
+    fail_remote_restore(state, "Codex 账户已切换，已取消旧账户的恢复请求")?;
+    state.identity = None;
+    emit(&SidecarEvent::IdentityCleared)
 }
 
 fn collect_session_addresses(
@@ -1824,6 +1932,7 @@ fn process_table_session_events(
 fn submit_hand_action(
     swarm: &mut libp2p::Swarm<token_holdem_network::NetworkBehaviour>,
     state: &mut RuntimeState,
+    expected: &HandActionPrecondition,
     action: &str,
     amount: Option<u64>,
 ) -> Result<()> {
@@ -1837,6 +1946,7 @@ fn submit_hand_action(
     let identity = state.identity.as_ref().context("尚未载入持久玩家身份")?;
     let events = state.hand.submit_action(
         swarm,
+        expected,
         action,
         unix_time_ms()?,
         &identity.device,
@@ -1940,13 +2050,13 @@ fn process_archive_events(
                     .as_ref()
                     .is_some_and(|pending| hex::encode(pending.locator) == *locator);
             }
-            ArchiveEvent::RecoveryBackupFailed { locator, .. }
+            ArchiveEvent::RecoveryBackupFailed { locator, reason }
                 if state
                     .pending_remote_restore
                     .as_ref()
                     .is_some_and(|pending| hex::encode(pending.locator) == *locator) =>
             {
-                state.pending_remote_restore = None;
+                fail_remote_restore(state, reason)?;
             }
             _ => {}
         }
@@ -1954,7 +2064,7 @@ fn process_archive_events(
     }
     if identity_status_changed {
         if let Some(identity) = state.identity.as_ref() {
-            emit_identity_ready(identity, None)?;
+            emit_identity_ready(identity, None, None)?;
         }
     }
     if remote_restore_ready {
@@ -1971,7 +2081,7 @@ fn complete_remote_restore(
     swarm: &mut libp2p::Swarm<token_holdem_network::NetworkBehaviour>,
     state: &mut RuntimeState,
 ) -> Result<()> {
-    ensure_identity_slot_is_empty(state)?;
+    ensure_identity_replaceable(state)?;
     let locator = state
         .pending_remote_restore
         .as_ref()
@@ -1988,7 +2098,7 @@ fn complete_remote_restore(
             .context("远端身份恢复状态缺失")?;
         let envelope: RecoveryEnvelope =
             decode_payload(&recovery_payload).context("远端身份恢复包载荷无效")?;
-        let account_fingerprint = identity_account_fingerprint(state)?;
+        let account_fingerprint = checked_identity_account(state, &pending.account_fingerprint)?;
         let root = envelope
             .open_for_account(pending.recovery_secret.as_str(), account_fingerprint)
             .context("无法用当前 Codex 资料与恢复密语解密远端身份")?;
@@ -1997,6 +2107,7 @@ fn complete_remote_restore(
             envelope,
             locator,
             recovery_payload,
+            account_fingerprint,
             &pending.device_label,
             unix_time_ms()?,
         )
@@ -2005,16 +2116,21 @@ fn complete_remote_restore(
         Ok(identity) => identity,
         Err(error) => {
             if state.archive.recovery_fetch_is_exhausted(locator) {
-                state.archive.cancel_recovery_fetch(locator);
-                state.pending_remote_restore = None;
+                fail_remote_restore(
+                    state,
+                    &format!("所有志愿归档节点的恢复候选均不可用：{error:#}"),
+                )?;
                 return Err(error.context("所有志愿归档节点的恢复候选均不可用"));
             }
             return Err(error.context("已拒绝一个无效恢复候选，继续等待其他归档节点"));
         }
     };
     state.archive.cancel_recovery_fetch(locator);
-    state.pending_remote_restore = None;
-    emit_identity_ready(&identity, None)?;
+    let pending = state
+        .pending_remote_restore
+        .take()
+        .context("远端身份恢复状态缺失")?;
+    emit_identity_ready(&identity, pending.request_id.as_deref(), Some(true))?;
     state.identity = Some(identity);
     publish_identity_recovery(swarm, state)?;
     sync_statistics(swarm, state)
@@ -2355,6 +2471,138 @@ fn emit(event: &impl Serialize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn isolated_state() -> RuntimeState {
+        let inputs = VolunteerInputs::default();
+        let volunteer = VolunteerRuntime::new(
+            inputs,
+            VolunteerPolicy::evaluate(inputs),
+            false,
+            false,
+            false,
+            false,
+            RelayServerLimits::default(),
+        );
+        RuntimeState::new(None, volunteer).unwrap()
+    }
+
+    fn test_command(
+        swarm: &mut libp2p::Swarm<token_holdem_network::NetworkBehaviour>,
+        state: &mut RuntimeState,
+        value: serde_json::Value,
+    ) -> Result<()> {
+        handle_command(swarm, state, decode_command_line(&value.to_string())?)
+    }
+
+    fn observation(account: &str) -> serde_json::Value {
+        serde_json::json!({ "type": "token_snapshot", "lifetime_tokens": 35_000_000_000_u64,
+            "account_identifier": account, "observed_at_unix_ms": unix_time_ms().unwrap(),
+            "source": "codex_app_server_account_usage" })
+    }
+
+    #[tokio::test]
+    async fn 自动身份允许空闲恢复且错误密语不会覆盖现有身份() {
+        let mut swarm = build_swarm(NetworkConfig::default()).unwrap();
+        let mut state = isolated_state();
+        test_command(&mut swarm, &mut state, observation("account-a")).unwrap();
+        let fingerprint = identity_account_fingerprint(&state).unwrap().to_owned();
+        let old = create_identity(
+            "original recovery secret",
+            "旧设备",
+            &fingerprint,
+            unix_time_ms().unwrap(),
+        )
+        .unwrap();
+        test_command(&mut swarm, &mut state, serde_json::json!({ "type": "ensure_identity",
+            "expected_account_fingerprint": fingerprint, "recovery_secret": "automatic recovery secret", "device_label": "新设备" })).unwrap();
+        let automatic_id = state.identity.as_ref().unwrap().player_id;
+        let mut restore = serde_json::json!({ "type": "restore_identity", "expected_account_fingerprint": fingerprint,
+            "recovery_envelope": old.recovery_envelope, "recovery_secret": "wrong recovery secret", "device_label": "恢复设备" });
+        assert!(test_command(&mut swarm, &mut state, restore.clone()).is_err());
+        assert_eq!(state.identity.as_ref().unwrap().player_id, automatic_id);
+        restore["recovery_secret"] = "original recovery secret".into();
+        test_command(&mut swarm, &mut state, restore).unwrap();
+        assert_eq!(state.identity.as_ref().unwrap().player_id, old.player_id);
+        assert_ne!(
+            state.identity.as_ref().unwrap().device.public_key(),
+            old.device.public_key()
+        );
+    }
+
+    #[tokio::test]
+    async fn 切换账户必须先离桌且拒绝旧页面身份请求() {
+        let mut swarm = build_swarm(NetworkConfig::default()).unwrap();
+        let mut state = isolated_state();
+        test_command(&mut swarm, &mut state, observation("account-a")).unwrap();
+        let fingerprint = identity_account_fingerprint(&state).unwrap().to_owned();
+        let ensure = serde_json::json!({ "type": "ensure_identity", "expected_account_fingerprint": fingerprint,
+            "recovery_secret": "account a recovery secret", "device_label": "设备" });
+        test_command(&mut swarm, &mut state, ensure.clone()).unwrap();
+        let identity = state.identity.as_ref().unwrap().player_id;
+        state.pending_room_joins.insert(
+            PeerId::random(),
+            PendingRoomJoin {
+                room_id: "pending-room".to_owned(),
+            },
+        );
+        assert!(test_command(&mut swarm, &mut state, observation("account-b")).is_err());
+        assert_eq!(state.identity.as_ref().unwrap().player_id, identity);
+        assert_eq!(identity_account_fingerprint(&state).unwrap(), fingerprint);
+        assert!(ensure_identity_replaceable(&state).is_err());
+        state.pending_room_joins.clear();
+        test_command(&mut swarm, &mut state, observation("account-b")).unwrap();
+        assert!(state.identity.is_none());
+        assert_ne!(identity_account_fingerprint(&state).unwrap(), fingerprint);
+        assert!(test_command(&mut swarm, &mut state, ensure.clone()).is_err());
+        let mut create = ensure;
+        create["type"] = "create_identity".into();
+        assert!(test_command(&mut swarm, &mut state, create).is_err());
+        assert!(state.identity.is_none());
+    }
+
+    #[tokio::test]
+    async fn 远端恢复等待期间禁止入桌且失败保留当前身份() {
+        let mut swarm = build_swarm(NetworkConfig::default()).unwrap();
+        let mut state = isolated_state();
+        test_command(&mut swarm, &mut state, observation("account-a")).unwrap();
+        let fingerprint = identity_account_fingerprint(&state).unwrap().to_owned();
+        let identity = create_identity(
+            "existing recovery secret",
+            "当前设备",
+            &fingerprint,
+            unix_time_ms().unwrap(),
+        )
+        .unwrap();
+        let original = identity.player_id;
+        state.identity = Some(identity);
+        state.pending_remote_restore = Some(PendingRemoteRestore {
+            request_id: None,
+            account_fingerprint: fingerprint.clone(),
+            locator: [1; 32],
+            recovery_secret: Zeroizing::new("remote recovery secret".to_owned()),
+            device_label: "设备".to_owned(),
+        });
+        assert!(validate_local_buy_in(&state, 80_000_000).is_err());
+        test_command(&mut swarm, &mut state, observation("account-b")).unwrap();
+        assert!(state.pending_remote_restore.is_none());
+        assert!(state.identity.is_none());
+        test_command(&mut swarm, &mut state, observation("account-a")).unwrap();
+        state.identity = Some(
+            create_identity(
+                "current recovery secret",
+                "设备",
+                &fingerprint,
+                unix_time_ms().unwrap(),
+            )
+            .unwrap(),
+        );
+        let current = state.identity.as_ref().unwrap().player_id;
+        assert_ne!(current, original);
+        test_command(&mut swarm, &mut state, serde_json::json!({ "type": "restore_remote_identity",
+            "expected_account_fingerprint": fingerprint, "recovery_secret": "remote recovery secret", "device_label": "设备" })).unwrap();
+        assert!(state.pending_remote_restore.is_none());
+        assert_eq!(state.identity.as_ref().unwrap().player_id, current);
+    }
     use token_holdem_sidecar::{HostNetworkCost, PowerSource, VolunteerConsent};
 
     #[test]

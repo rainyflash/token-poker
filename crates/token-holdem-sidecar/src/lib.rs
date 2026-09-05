@@ -6,8 +6,8 @@ pub mod runtime_supervisor;
 mod volunteer;
 
 pub use command::{
-    decode_command_line, SidecarCommand, SidecarCommandError, TokenSnapshotSource,
-    MAX_COMMAND_LINE_BYTES,
+    decode_command_line, HandActionPrecondition, SidecarCommand, SidecarCommandError,
+    TokenSnapshotSource, MAX_COMMAND_LINE_BYTES,
 };
 pub use runtime_protocol::{
     parse_runtime_client_line, EventJournal, JournalSnapshot, RuntimeClientRequest, RuntimeEvent,

@@ -114,3 +114,25 @@ test("官方 Token 用例合并并发刷新并向领域运行时发布规范化�
     source: "codex_app_server_account_usage",
   });
 });
+
+test("其他任务切换账户后旧服务缓存不能覆盖共享账户", async () => {
+  const runtime = { accountBinding: null, tokenSnapshot: null,
+    async publishTokenSnapshot(command) {
+      this.accountBinding = { account_fingerprint: "a", peer_verifiable: false };
+      this.tokenSnapshot = { ...command, account_fingerprint: "a" };
+      return this.accountBinding;
+    },
+  };
+  const reader = { read: async () => ({ lifetimeTokens: 100, accountIdentifier: "a", observedAtUnixMs: 1000,
+    source: "codex_app_server_account_usage" }) };
+  const service = new OfficialTokenService({ reader, runtime, now: () => 1000 });
+  await service.refresh();
+  runtime.accountBinding = { account_fingerprint: "b", peer_verifiable: false };
+  runtime.tokenSnapshot = { lifetime_tokens: 999, account_fingerprint: "b", observed_at_unix_ms: 1000,
+    source: "codex_app_server_account_usage" };
+  assert.equal(service.snapshot.account_fingerprint, "b");
+  assert.equal((await service.refresh()).lifetime_tokens, 999);
+  runtime.accountBinding = null;
+  runtime.tokenSnapshot = null;
+  assert.equal(service.snapshot, null);
+});

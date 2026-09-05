@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,11 +125,13 @@ async function main() {
     await waitForBoth(host, guest, "token_snapshot_accepted", 10_000);
     host.send({
       type: "create_identity",
+      expected_account_fingerprint: host.latest("token_snapshot_accepted").account_fingerprint,
       recovery_secret: "token-holdem-host-p2p-verification",
       device_label: "P2P 验证主端",
     });
     guest.send({
       type: "create_identity",
+      expected_account_fingerprint: guest.latest("token_snapshot_accepted").account_fingerprint,
       recovery_secret: "token-holdem-guest-p2p-verification",
       device_label: "P2P 验证访客端",
     });
@@ -276,8 +279,21 @@ async function main() {
       const actor = hostState.can_act ? host : guestState.can_act ? guest : null;
       const actorState = actor === host ? hostState : guestState;
       assert(actor !== null && actorState !== null, "当前没有唯一可行动玩家");
+      if (actionCount === 0) {
+        for (const mismatch of [{ table_id: "ff".repeat(32) }, { hand_number: actorState.hand_number + 1 },
+          { sequence: actorState.sequence + 1 }, { public_state_hash: "ff".repeat(32) }]) {
+          const requestId = randomUUID();
+          actor.send({ type: "submit_action", request_id: requestId, action: "call",
+            expected: { table_id: actorState.table_id, hand_number: actorState.hand_number,
+              sequence: actorState.sequence, public_state_hash: actorState.public_state_hash, ...mismatch } });
+          await waitUntil(() => actor.latestWhere("command_failed", (event) => event.request_id === requestId) !== null, 5000, "过期动作没有被拒绝");
+          assert(actor.latest("hand_state").sequence === actorState.sequence, "过期动作错误推进了手牌序号");
+        }
+      }
       actor.send({
         type: "submit_action",
+        expected: { table_id: actorState.table_id, hand_number: actorState.hand_number,
+          sequence: actorState.sequence, public_state_hash: actorState.public_state_hash },
         action: actorState.to_call === 0 ? "check" : "call",
       });
       actionCount += 1;

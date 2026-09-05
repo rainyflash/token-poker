@@ -553,12 +553,22 @@ impl HandRuntime {
     pub(crate) fn submit_action(
         &mut self,
         swarm: &mut libp2p::Swarm<NetworkBehaviour>,
+        expected: &token_holdem_sidecar::HandActionPrecondition,
         action: PlayerAction,
         now_unix_ms: u64,
         device: &DeviceIdentity,
         certificate: DeviceCertificate,
     ) -> Result<Vec<HandEvent>> {
         let active = self.active.as_mut().context("尚未建立牌桌会话")?;
+        anyhow::ensure!(
+            expected.matches(
+                &hex::encode(active.table.table_id),
+                active.hand_number,
+                active.sequence,
+                &hex::encode(active.public_state_hash()?)
+            ),
+            "手牌状态已变化，已拒绝过期动作；请查看最新牌桌后重试"
+        );
         if active.safe_leave_requested {
             anyhow::bail!("已请求安全离桌，本手牌将由客户端在轮到你时自动弃牌")
         }

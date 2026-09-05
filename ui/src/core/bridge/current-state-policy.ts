@@ -1,4 +1,5 @@
 export interface CurrentStateProjection<TEvent> {
+  readonly streamId: string;
   readonly latestSequence: number;
   readonly events: readonly TEvent[];
 }
@@ -26,6 +27,7 @@ export function parseCurrentStateProjection<TEvent>(
   }
   entries.sort((left, right) => left.sequence - right.sequence);
   return {
+    streamId: typeof value.stream_id === "string" ? value.stream_id : "legacy",
     latestSequence,
     events: entries.map((entry) => entry.event),
   };

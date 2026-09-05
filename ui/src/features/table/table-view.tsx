@@ -1,11 +1,9 @@
 import { AnimatePresence } from "motion/react";
 import { History, LogOut, PanelRight, ShieldCheck, Wifi } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type {
   BridgeSnapshot,
-  CommandResult,
   ConfirmedHostCommandSender,
-  HostCommand,
 } from "../../core/bridge/contracts";
 import { useI18n } from "../../core/i18n/use-i18n";
 import type { MessageKey } from "../../core/i18n/messages";
@@ -17,21 +15,23 @@ import { ActionConsole } from "./components/action-console";
 import { HandInfoPanel } from "./components/hand-info-panel";
 import { PokerTable } from "./components/poker-table";
 import { hasConfirmedOpponent } from "./model/table-presence";
+import { createHandActionCommand, handActionScope } from "./model/action-command";
 
 interface TableViewProps {
   readonly bridge: BridgeSnapshot;
-  readonly sendCommand: (command: HostCommand) => CommandResult;
   readonly sendConfirmedCommand: ConfirmedHostCommandSender;
   readonly onOpenStatistics: () => void;
 }
 
-export function TableView({ bridge, sendCommand, sendConfirmedCommand, onOpenStatistics }: TableViewProps) {
+export function TableView({ bridge, sendConfirmedCommand, onOpenStatistics }: TableViewProps) {
   const { t, formatTokens } = useI18n();
   const [requestedBetAmount, setRequestedBetAmount] = useState(0);
   const [actionFeedback, setActionFeedback] = useState<{
-    readonly sequence: number;
+    readonly scope: string;
     readonly message: string;
   } | null>(null);
+  const actionInFlight = useRef(false);
+  const [actionPending, setActionPending] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const safeLeave = useSafeLeave(sendConfirmedCommand, t("bridge.commandFailed"));
   const hand = bridge.hand;
@@ -50,7 +50,7 @@ export function TableView({ bridge, sendCommand, sendConfirmedCommand, onOpenSta
   const betAmount = Math.min(maximumRaise, Math.max(minimumRaise, requestedBetAmount));
   const leaving = safeLeave.isPending || bridge.room.localRole === "leaving";
   const canAct =
-    hand.canAct && hand.pendingSequence === null && !hand.sessionInterrupted && !leaving;
+    hand.canAct && hand.publicStateHash !== null && !actionPending && !hand.sessionInterrupted && !leaving;
   const awaitingReveal = hand.awaitingReveal;
   const localOutcome = hand.outcomes.find((outcome) => outcome.seat === hand.localSeat);
   const settledMessage =
@@ -72,9 +72,9 @@ export function TableView({ bridge, sendCommand, sendConfirmedCommand, onOpenSta
             ? settledMessage
       : hand.awaitingReveal
         ? t("table.verifyingReveal")
-        : hand.pendingSequence === null
+        : !actionPending
           ? null
-          : t("table.confirmingAction", { sequence: hand.pendingSequence });
+          : t("table.confirmingAction", { sequence: hand.sequence + 1 });
   const proofLabel =
     hand.phase === "key_exchange" || hand.phase === "shuffling" || hand.phase === "dealing"
       ? t("table.proofGenerating")
@@ -93,27 +93,32 @@ export function TableView({ bridge, sendCommand, sendConfirmedCommand, onOpenSta
       ? t("table.leaving")
       : safeLeave.state.status === "failed"
         ? safeLeave.state.error
-      : actionFeedback?.sequence === hand.sequence
+      : actionFeedback?.scope === handActionScope(hand)
         ? actionFeedback.message
         : null;
 
   const submitAction = (action: "fold" | "check" | "call" | "raise"): void => {
-    const command: HostCommand =
-      action === "raise"
-        ? { type: "submit_action", action, amount: betAmount }
-        : { type: "submit_action", action };
-    const result = sendCommand(command);
+    if (!canAct || actionInFlight.current) return;
+    const command = createHandActionCommand(hand, action, betAmount);
+    if (command === null) return;
+    actionInFlight.current = true;
+    setActionPending(true);
+    setActionFeedback(null);
     const actionKeys: Readonly<Record<typeof action, MessageKey>> = {
       fold: "table.actionFolded",
       check: "table.actionChecked",
       call: "table.actionCalled",
       raise: "table.actionRaised",
     };
-    setActionFeedback({
-      sequence: hand.sequence,
-      message: result.ok
-        ? t(actionKeys[action], { amount: formatTokens(betAmount) })
-        : result.error,
+    const scope = handActionScope(hand);
+    void sendConfirmedCommand(command).then((result) => {
+      setActionFeedback({ scope, message: result.ok
+        ? t(actionKeys[action], { amount: formatTokens(betAmount) }) : result.error });
+    }).catch((error: unknown) => {
+      setActionFeedback({ scope, message: error instanceof Error ? error.message : t("bridge.commandFailed") });
+    }).finally(() => {
+      actionInFlight.current = false;
+      setActionPending(false);
     });
   };
 
@@ -193,7 +198,7 @@ export function TableView({ bridge, sendCommand, sendConfirmedCommand, onOpenSta
           toCall={hand.toCall}
           canAct={canAct}
           awaitingReveal={awaitingReveal}
-          inactiveLabel={inactiveLabel(hand.phase, t)}
+          inactiveLabel={actionPending ? t("action.submitting") : inactiveLabel(hand.phase, t)}
           onAmountChange={setRequestedBetAmount}
           onAction={submitAction}
         />

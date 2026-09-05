@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Cloud, KeyRound, X } from "lucide-react";
-import { useState } from "react";
-import type { CommandResult, HostCommand } from "../../../core/bridge/contracts";
+import { useEffect, useRef, useState } from "react";
+import type { ConfirmedHostCommandSender, HostCommand } from "../../../core/bridge/contracts";
 import { useI18n } from "../../../core/i18n/use-i18n";
 import type { MessageKey } from "../../../core/i18n/messages";
 import { Button } from "../../../shared/ui/button";
@@ -38,20 +38,29 @@ interface IdentitySessionDialogProps {
   readonly action: IdentityAction | null;
   readonly onActionChange: (action: IdentityAction | null) => void;
   readonly onAccepted: (label: string) => void;
-  readonly sendCommand: (command: HostCommand) => CommandResult;
+  readonly sendConfirmedCommand: ConfirmedHostCommandSender;
+  readonly accountFingerprint: string | null;
 }
 
 export function IdentitySessionDialog({
   action,
   onActionChange,
   onAccepted,
-  sendCommand,
+  sendConfirmedCommand,
+  accountFingerprint,
 }: IdentitySessionDialogProps) {
   const { t } = useI18n();
   const [customDeviceLabel, setCustomDeviceLabel] = useState<string | null>(null);
   const [recoverySecret, setRecoverySecret] = useState("");
   const [recoveryEnvelope, setRecoveryEnvelope] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const mode = action ?? "restore";
   const presentation = ACTION_PRESENTATION[mode];
   const ActionIcon = presentation.icon;
@@ -64,6 +73,7 @@ export function IdentitySessionDialog({
   };
 
   const changeOpen = (open: boolean): void => {
+    if (inFlight.current) return;
     if (!open) {
       clearSensitiveFields();
       setCustomDeviceLabel(null);
@@ -72,8 +82,8 @@ export function IdentitySessionDialog({
     }
   };
 
-  const submit = (): void => {
-    if (action === null) return;
+  const submit = async (): Promise<void> => {
+    if (action === null || accountFingerprint === null || inFlight.current) return;
     const normalizedLabel = deviceLabel.trim();
     if (new TextEncoder().encode(normalizedLabel).length > 80 || normalizedLabel.length === 0) {
       setMessage(t("identity.deviceNameInvalid"));
@@ -92,25 +102,41 @@ export function IdentitySessionDialog({
     const commands: Record<IdentityAction, HostCommand> = {
       restore: {
         type: "restore_identity",
+        expected_account_fingerprint: accountFingerprint,
         recovery_envelope: recoveryEnvelope.trim(),
         recovery_secret: recoverySecret,
         device_label: normalizedLabel,
       },
       remote: {
         type: "restore_remote_identity",
+        expected_account_fingerprint: accountFingerprint,
         recovery_secret: recoverySecret,
         device_label: normalizedLabel,
       },
     };
-    const result = sendCommand(commands[action]);
-    if (!result.ok) {
-      setMessage(result.error);
-      return;
-    }
-    clearSensitiveFields();
+    inFlight.current = true;
+    setPending(true);
     setMessage(null);
-    onAccepted(t(presentation.pending));
-    onActionChange(null);
+    try {
+      const result = await sendConfirmedCommand(commands[action]);
+      if (!mounted.current) return;
+      if (!result.ok) {
+        setMessage(result.error);
+        return;
+      }
+      if (result.identity?.accountFingerprint !== accountFingerprint || !result.identity.recoverySecretConfirmed) {
+        setMessage(t("identity.recoveryUnconfirmed"));
+        return;
+      }
+      clearSensitiveFields();
+      onAccepted(t("identity.recoveryComplete"));
+      onActionChange(null);
+    } catch (error: unknown) {
+      if (mounted.current) setMessage(error instanceof Error ? error.message : t("bridge.commandFailed"));
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setPending(false);
+    }
   };
 
   return (
@@ -133,7 +159,7 @@ export function IdentitySessionDialog({
               </div>
             </div>
             <Dialog.Close asChild>
-              <Button variant="ghost" size="icon" className="size-8" aria-label={t("common.close")}>
+              <Button disabled={pending} variant="ghost" size="icon" className="size-8" aria-label={t("common.close")}>
                 <X className="size-4" />
               </Button>
             </Dialog.Close>
@@ -142,10 +168,10 @@ export function IdentitySessionDialog({
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              submit();
+              void submit();
             }}
           >
-            <div className="mt-5 space-y-4">
+            <fieldset disabled={pending} className="mt-5 space-y-4">
               {isManualRestore ? (
                 <label className="block text-[10px] font-medium text-[var(--muted)]">
                   {t("identity.encryptedKit")}
@@ -179,14 +205,15 @@ export function IdentitySessionDialog({
                 />
               </label>
 
-            </div>
+            </fieldset>
 
             <div className="mt-5 rounded-[10px] border border-[#eadfca] bg-[#fffcf6] px-3 py-2.5 text-[9px] leading-4 text-[#846b44]">
               {t(presentation.caution)}
             </div>
             {message ? <p className="mt-3 text-[10px] text-[#a14038]">{message}</p> : null}
-            <Button type="submit" variant="primary" size="lg" className="mt-4 w-full">
-              {t(presentation.button)}
+            {pending ? <p role="status" className="mt-3 text-[10px] text-[var(--muted)]">{t(presentation.pending)}</p> : null}
+            <Button disabled={pending || accountFingerprint === null} type="submit" variant="primary" size="lg" className="mt-4 w-full">
+              {t(pending ? "identity.restoring" : presentation.button)}
             </Button>
           </form>
         </Dialog.Content>

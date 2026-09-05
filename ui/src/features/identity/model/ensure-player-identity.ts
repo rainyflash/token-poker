@@ -1,9 +1,9 @@
-import type { CommandResult, HostCommand } from "../../../core/bridge/contracts";
+import type { CommandResult, HostCommand, IdentityConfirmation } from "../../../core/bridge/contracts";
 
 export type EnsureIdentityCommand = Extract<HostCommand, { readonly type: "ensure_identity" }>;
 
 export type IdentityEnsureOutcome =
-  | { readonly status: "confirmed" }
+  | { readonly status: "confirmed"; readonly identity: IdentityConfirmation }
   | { readonly status: "failed"; readonly error: string }
   | { readonly status: "cancelled" };
 
@@ -22,19 +22,26 @@ export async function ensurePlayerIdentity(
 ): Promise<IdentityEnsureOutcome> {
   const delays = options.delaysMs ?? IDENTITY_RETRY_DELAYS_MS;
   const wait = options.wait ?? waitForDelay;
+  const isCancelled = (): boolean => options.signal?.aborted === true;
   let lastError = "玩家身份初始化失败";
 
   for (const delayMs of delays) {
-    if (!(await wait(delayMs, options.signal))) return { status: "cancelled" };
+    if (!(await wait(delayMs, options.signal)) || isCancelled()) return { status: "cancelled" };
     let result: CommandResult;
     try {
       result = await sendConfirmed(command);
     } catch (error: unknown) {
+      if (isCancelled()) return { status: "cancelled" };
       lastError = error instanceof Error ? error.message : String(error);
       continue;
     }
-    if (options.signal?.aborted === true) return { status: "cancelled" };
-    if (result.ok) return { status: "confirmed" };
+    if (isCancelled()) return { status: "cancelled" };
+    if (result.ok) {
+      if (result.identity?.accountFingerprint === command.expected_account_fingerprint) {
+        return { status: "confirmed", identity: result.identity };
+      }
+      return { status: "failed", error: "身份确认缺失或 Codex 账户已切换" };
+    }
     lastError = result.error;
   }
 

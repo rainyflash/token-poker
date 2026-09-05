@@ -3,6 +3,7 @@ import { useState } from "react";
 import type {
   BridgeSnapshot,
   CommandResult,
+  ConfirmedHostCommandSender,
   HostCommand,
 } from "../../core/bridge/contracts";
 import { useI18n } from "../../core/i18n/use-i18n";
@@ -22,6 +23,7 @@ interface IdentityViewProps {
   readonly recoveryKit: RecoveryKit | null;
   readonly autoIdentityError: string | null;
   readonly sendCommand: (command: HostCommand) => CommandResult;
+  readonly sendConfirmedCommand: ConfirmedHostCommandSender;
 }
 
 interface RecoveryExport {
@@ -36,7 +38,9 @@ function recoveryExport(
   bridge: BridgeSnapshot,
   recoveryKit: RecoveryKit | null,
 ): RecoveryExport | null {
-  if (bridge.identity === null || recoveryKit?.recoveryEnvelope == null) return null;
+  if (bridge.identity === null || recoveryKit?.recoveryEnvelope == null ||
+      recoveryKit.playerId !== bridge.identity.playerId ||
+      recoveryKit.accountFingerprint !== bridge.accountBinding?.accountFingerprint) return null;
 
   return {
     schema: "token-holdem/recovery-kit/v1",
@@ -52,6 +56,7 @@ export function IdentityView({
   recoveryKit,
   autoIdentityError,
   sendCommand,
+  sendConfirmedCommand,
 }: IdentityViewProps) {
   const { t } = useI18n();
   const profile = projectPlayerProfile(
@@ -162,10 +167,12 @@ export function IdentityView({
       </div>
 
       <IdentitySessionDialog
+        key={bridge.accountBinding?.accountFingerprint ?? "unbound"}
+        accountFingerprint={bridge.accountBinding?.accountFingerprint ?? null}
         action={identityAction}
         onActionChange={setIdentityAction}
         onAccepted={setStatusMessage}
-        sendCommand={sendCommand}
+        sendConfirmedCommand={sendConfirmedCommand}
       />
     </section>
   );

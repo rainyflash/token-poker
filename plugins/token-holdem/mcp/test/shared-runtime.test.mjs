@@ -20,7 +20,7 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
   process.env.LOCALAPPDATA = isolatedLocalAppData;
   process.env.TOKEN_HOLDEM_RUNTIME_PATH = join(pluginRoot, "bin", "token-holdem-runtime.exe");
   process.env.TOKEN_HOLDEM_SIDECAR_PATH = join(pluginRoot, "bin", "token-holdem-sidecar.exe");
-  process.env.TOKEN_HOLDEM_RUNTIME_PIPE = String.raw`\\.\pipe\token-holdem-runtime-v6-${randomBytes(12).toString("hex")}`;
+  process.env.TOKEN_HOLDEM_RUNTIME_PIPE = String.raw`\\.\pipe\token-holdem-runtime-v7-${randomBytes(12).toString("hex")}`;
   process.env.TOKEN_HOLDEM_RUNTIME_IDLE_TIMEOUT_SECONDS = "30";
 
   let first = null;
@@ -44,12 +44,33 @@ test("两个对话客户端重新附着同一运行时并恢复 Token 快照", a
     const identity = await first.ensureIdentity(
       {
         type: "ensure_identity",
+        expected_account_fingerprint: first.accountBinding.account_fingerprint,
         recovery_secret: "跨对话共享运行时测试口令-abcdefghijkl",
         device_label: "测试设备",
       },
       randomUUID(),
     );
     assert.equal(first.currentState.identity?.player_id, identity.player_id);
+    assert.equal(identity.recovery_secret_confirmed, true);
+    const [retry, reused] = await Promise.all([
+      first.ensureIdentity({ type: "ensure_identity", expected_account_fingerprint: identity.account_fingerprint,
+        recovery_secret: "跨对话共享运行时测试口令-abcdefghijkl", device_label: "重试设备" }, randomUUID()),
+      first.ensureIdentity({ type: "ensure_identity", expected_account_fingerprint: identity.account_fingerprint,
+        recovery_secret: "another-task-unrelated-secret", device_label: "另一任务" }, randomUUID()),
+    ]);
+    assert.equal(retry.recovery_secret_confirmed, true);
+    assert.equal(reused.recovery_secret_confirmed, false);
+    assert.equal(reused.player_id, identity.player_id);
+    assert.equal(reused.recovery_envelope, identity.recovery_envelope);
+    await assert.rejects(first.ensureIdentity({ type: "restore_identity",
+      expected_account_fingerprint: identity.account_fingerprint, recovery_envelope: reused.recovery_envelope,
+      recovery_secret: "another-task-unrelated-secret", device_label: "错误密语恢复" }, randomUUID()), /解密/u);
+    assert.equal(first.currentState.identity.player_id, identity.player_id);
+    const restored = await first.ensureIdentity({ type: "restore_identity",
+      expected_account_fingerprint: identity.account_fingerprint, recovery_envelope: identity.recovery_envelope,
+      recovery_secret: "跨对话共享运行时测试口令-abcdefghijkl", device_label: "恢复设备" }, randomUUID());
+    assert.equal(restored.recovery_secret_confirmed, true);
+    assert.equal(restored.player_id, identity.player_id);
     await assert.rejects(
       first.leaveTable({ type: "leave_table" }, randomUUID()),
       /当前既没有公开匹配，也没有可离开的牌桌/u,

@@ -135,11 +135,13 @@ async function main() {
     await waitForBoth(host, guest, "archive_peers_configured", 20_000);
     host.send({
       type: "create_identity",
+      expected_account_fingerprint: host.latest("token_snapshot_accepted").account_fingerprint,
       recovery_secret: "token-holdem-host-complete-verification",
       device_label: "完整验收主端",
     });
     guest.send({
       type: "create_identity",
+      expected_account_fingerprint: guest.latest("token_snapshot_accepted").account_fingerprint,
       recovery_secret: "token-holdem-guest-complete-verification",
       device_label: "完整验收访客端",
     });
@@ -296,6 +298,11 @@ async function main() {
       observed_at_unix_ms: Date.now(),
     });
     await waitFor(restored, "token_snapshot_accepted", 10_000);
+    restored.send({ type: "ensure_identity",
+      expected_account_fingerprint: restored.latest("token_snapshot_accepted").account_fingerprint,
+      recovery_secret: "automatic-identity-before-restore", device_label: "自动初始化设备" });
+    await waitFor(restored, "identity_ready", 10_000);
+    assert(restored.latest("identity_ready").player_id !== hostPlayerId, "恢复前应存在自动创建的临时身份");
     restored.send({
       type: "configure_archive_nodes",
       addresses: [dialableAddress(archive)],
@@ -304,11 +311,12 @@ async function main() {
     await waitFor(restored, "archive_peers_configured", 20_000);
     restored.send({
       type: "restore_remote_identity",
+      expected_account_fingerprint: restored.latest("token_snapshot_accepted").account_fingerprint,
       recovery_secret: "token-holdem-host-complete-verification",
       device_label: "完整验收恢复端",
     });
     await waitFor(restored, "recovery_backup_fetched", 30_000);
-    await waitFor(restored, "identity_ready", 30_000);
+    await waitUntil(() => restored.latest("identity_ready")?.player_id === hostPlayerId, 30_000, "等待远端身份替换确认超时");
     assert(restored.latest("identity_ready")?.player_id === hostPlayerId, "远端恢复没有还原同一玩家身份");
     await waitUntil(
       () =>
@@ -384,6 +392,8 @@ async function playHand(host, guest, handNumber) {
     assert(actor !== null && actorState !== null, "当前没有唯一可行动玩家");
     actor.send({
       type: "submit_action",
+      expected: { table_id: actorState.table_id, hand_number: actorState.hand_number,
+        sequence: actorState.sequence, public_state_hash: actorState.public_state_hash },
       action: actorState.to_call === 0 ? "check" : "call",
     });
     actionCount += 1;

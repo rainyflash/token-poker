@@ -46,11 +46,11 @@ pub use wire::{
 };
 
 pub const CONTROL_PROTOCOL: &str = "/token-holdem/control/11";
-pub const TABLE_POOL_TOPIC_PREFIX: &str = "/token-holdem/table-pool/2/";
+pub const TABLE_POOL_TOPIC_PREFIX: &str = "/token-holdem/table-pool/3/";
 pub const TABLE_SESSION_TOPIC_PREFIX: &str = "/token-holdem/table-session/2/";
-pub const FRIEND_ROOM_TOPIC_PREFIX: &str = "/token-holdem/friend-room/2/";
-pub const PROTOCOL_VERSION: &str = "11";
-pub const IDENTIFY_PROTOCOL: &str = "/token-holdem/11.0.0";
+pub const FRIEND_ROOM_TOPIC_PREFIX: &str = "/token-holdem/friend-room/3/";
+pub const PROTOCOL_VERSION: &str = "12";
+pub const IDENTIFY_PROTOCOL: &str = "/token-holdem/12.0.0";
 pub const RENDEZVOUS_REGISTRATION_TTL_SECONDS: u64 = 120;
 pub const RENDEZVOUS_SERVER_MIN_TTL_SECONDS: u64 = 60;
 pub const RENDEZVOUS_SERVER_MAX_TTL_SECONDS: u64 = 7_200;

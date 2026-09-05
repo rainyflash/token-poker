@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { homedir, userInfo } from "node:os";
 
-export const RUNTIME_PROTOCOL_VERSION = 6;
-const PIPE_PREFIX = String.raw`\\.\pipe\token-holdem-runtime-v6-`;
+export const RUNTIME_PROTOCOL_VERSION = 7;
+const PIPE_PREFIX = String.raw`\\.\pipe\token-holdem-runtime-v7-`;
 
 export function runtimePipeName(runtimeScope) {
   const override = process.env.TOKEN_HOLDEM_RUNTIME_PIPE;

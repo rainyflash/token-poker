@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use thiserror::Error;
 
-pub const RUNTIME_PROTOCOL_VERSION: u16 = 6;
+pub const RUNTIME_PROTOCOL_VERSION: u16 = 7;
 const EVENT_LIMIT: usize = 4_096;
 const EVENT_BYTES_LIMIT: usize = 8 * 1_024 * 1_024;
 const WORKER_ARGUMENT_LIMIT: usize = 64;
@@ -113,7 +113,22 @@ impl SessionEventProjection {
             return;
         };
         match event_type {
-            "identity_ready" => self.insert("identity", event),
+            "identity_ready" => {
+                if self
+                    .slots
+                    .get("identity")
+                    .and_then(|entry| entry.event.get("player_id"))
+                    != event.event.get("player_id")
+                {
+                    self.slots.remove("statistics");
+                }
+                self.insert("identity", event);
+            }
+            "identity_cleared" => {
+                self.slots.remove("identity");
+                self.slots.remove("statistics");
+            }
+            "statistics_updated" => self.insert("statistics", event),
             "pool_joined" => {
                 self.clear_pool();
                 self.insert("pool", event);
@@ -562,7 +577,7 @@ mod tests {
     #[test]
     fn 运行时协议要求先握手并拒绝共享内核退出命令() {
         assert!(matches!(
-            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":6}"#),
+            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":7}"#),
             Ok(RuntimeClientRequest::Attach)
         ));
         assert!(matches!(
@@ -570,7 +585,7 @@ mod tests {
             Err(RuntimeProtocolError::WorkerShutdownForbidden)
         ));
         assert!(matches!(
-            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":1}"#),
+            parse_runtime_client_line(r#"{"type":"runtime_attach","protocol_version":6}"#),
             Err(RuntimeProtocolError::IncompatibleVersion { .. })
         ));
     }
@@ -790,5 +805,30 @@ mod tests {
             ),
             Err(RuntimeProtocolError::InvalidRestart(_))
         ));
+    }
+
+    #[test]
+    fn 身份切换会清除保留投影中的旧身份和战绩() {
+        let mut journal = EventJournal::new("account-switch".to_owned());
+        for event in [
+            serde_json::json!({ "type": "identity_ready", "player_id": "a" }),
+            serde_json::json!({ "type": "statistics_updated", "completed_hands": 99 }),
+            serde_json::json!({ "type": "identity_cleared" }),
+        ] {
+            journal.append(event).unwrap();
+        }
+        assert!(journal.session_projection.slots.is_empty());
+        for event in [
+            serde_json::json!({ "type": "identity_ready", "player_id": "b" }),
+            serde_json::json!({ "type": "statistics_updated", "completed_hands": 3 }),
+            serde_json::json!({ "type": "identity_ready", "player_id": "c" }),
+        ] {
+            journal.append(event).unwrap();
+        }
+        assert_eq!(journal.session_projection.slots.len(), 1);
+        assert_eq!(
+            journal.session_projection.slots["identity"].event["player_id"],
+            "c"
+        );
     }
 }

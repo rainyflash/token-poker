@@ -3,6 +3,7 @@ import { z } from "zod";
 const safeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const boundedText = (maximum) => z.string().trim().min(1).max(maximum);
 const address = boundedText(2_048);
+const recoverySecret = z.string().min(12).max(256);
 const requestId = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu);
@@ -36,29 +37,33 @@ const commandVariants = [
   z
     .object({
       type: z.literal("ensure_identity"),
-      recovery_secret: boundedText(256),
+      expected_account_fingerprint: boundedText(128),
+      recovery_secret: recoverySecret,
       device_label: boundedText(96),
     })
     .strict(),
   z
     .object({
       type: z.literal("create_identity"),
-      recovery_secret: boundedText(256),
+      expected_account_fingerprint: boundedText(128),
+      recovery_secret: recoverySecret,
       device_label: boundedText(96),
     })
     .strict(),
   z
     .object({
       type: z.literal("restore_identity"),
+      expected_account_fingerprint: boundedText(128),
       recovery_envelope: boundedText(65_536),
-      recovery_secret: boundedText(256),
+      recovery_secret: recoverySecret,
       device_label: boundedText(96),
     })
     .strict(),
   z
     .object({
       type: z.literal("restore_remote_identity"),
-      recovery_secret: boundedText(256),
+      expected_account_fingerprint: boundedText(128),
+      recovery_secret: recoverySecret,
       device_label: boundedText(96),
     })
     .strict(),
@@ -81,6 +86,10 @@ const commandVariants = [
   z
     .object({
       type: z.literal("submit_action"),
+      expected: z.object({
+        table_id: boundedText(128), hand_number: safeInteger, sequence: safeInteger,
+        public_state_hash: z.string().regex(/^[0-9a-f]{64}$/u),
+      }).strict(),
       action: z.enum(["fold", "check", "call", "raise"]),
       amount: safeInteger.optional(),
     })

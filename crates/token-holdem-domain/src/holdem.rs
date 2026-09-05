@@ -602,6 +602,11 @@ impl HoldemHand {
             for seat in &self.seats {
                 if seat.status == SeatStatus::Active && seat.street_committed < self.current_bet {
                     self.pending.insert(seat.player_id);
+                    if self.current_bet.value() - seat.street_committed.value()
+                        >= self.last_full_raise.value()
+                    {
+                        self.raise_rights.insert(seat.player_id);
+                    }
                 }
             }
         }
@@ -926,6 +931,59 @@ mod tests {
                 minimum_target: Chips::new(4)
             })
         );
+    }
+
+    #[test]
+    fn 连续短额全下累计达到完整加注后重新开放加注权() {
+        let players = [1, 2, 3, 4].map(|id| PlayerId::new([id; 32]));
+        let mut hand = HoldemHand::start(
+            level(),
+            players
+                .into_iter()
+                .zip([200, 90, 120, 200].map(Chips::new))
+                .collect(),
+            0,
+        )
+        .unwrap();
+        hand.act(players[3], PlayerAction::RaiseTo(Chips::new(60)))
+            .unwrap();
+        hand.act(players[0], PlayerAction::Call).unwrap();
+        hand.act(players[1], PlayerAction::RaiseTo(Chips::new(90)))
+            .unwrap();
+        hand.act(players[2], PlayerAction::RaiseTo(Chips::new(120)))
+            .unwrap();
+        assert_eq!(hand.minimum_raise_to().unwrap(), Chips::new(178));
+        assert!(hand
+            .act(players[3], PlayerAction::RaiseTo(Chips::new(178)))
+            .is_ok());
+    }
+
+    #[test]
+    fn 跟过中间短额全下的玩家必须单独累计面对的加注额() {
+        let players = [1, 2, 3, 4, 5].map(|id| PlayerId::new([id; 32]));
+        let mut hand = HoldemHand::start(
+            level(),
+            players
+                .into_iter()
+                .zip([200, 120, 200, 200, 90].map(Chips::new))
+                .collect(),
+            0,
+        )
+        .unwrap();
+        hand.act(players[3], PlayerAction::RaiseTo(Chips::new(60)))
+            .unwrap();
+        hand.act(players[4], PlayerAction::RaiseTo(Chips::new(90)))
+            .unwrap();
+        hand.act(players[0], PlayerAction::Call).unwrap();
+        hand.act(players[1], PlayerAction::RaiseTo(Chips::new(120)))
+            .unwrap();
+        hand.act(players[2], PlayerAction::Call).unwrap();
+        hand.act(players[3], PlayerAction::Call).unwrap();
+        assert_eq!(
+            hand.act(players[0], PlayerAction::RaiseTo(Chips::new(178))),
+            Err(HoldemError::RaiseNotReopened)
+        );
+        assert!(hand.act(players[0], PlayerAction::Call).is_ok());
     }
 
     #[test]

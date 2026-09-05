@@ -48,6 +48,7 @@ export interface UpdateStatus {
 }
 
 export interface IdentitySnapshot {
+  readonly accountFingerprint: string;
   readonly playerId: string;
   readonly devicePublicKey: string;
   readonly deviceLabel: string;
@@ -141,6 +142,7 @@ export interface HandOutcomeSnapshot {
 }
 
 export interface HandSnapshot {
+  readonly publicStateHash: string | null;
   readonly phase: HandProtocolPhase;
   readonly tableId: string | null;
   readonly handNumber: number;
@@ -275,22 +277,26 @@ export type HostCommand =
     }
   | {
       readonly type: "ensure_identity";
+      readonly expected_account_fingerprint: string;
       readonly recovery_secret: string;
       readonly device_label: string;
     }
   | {
       readonly type: "create_identity";
+      readonly expected_account_fingerprint: string;
       readonly recovery_secret: string;
       readonly device_label: string;
     }
   | {
       readonly type: "restore_identity";
+      readonly expected_account_fingerprint: string;
       readonly recovery_envelope: string;
       readonly recovery_secret: string;
       readonly device_label: string;
     }
   | {
       readonly type: "restore_remote_identity";
+      readonly expected_account_fingerprint: string;
       readonly recovery_secret: string;
       readonly device_label: string;
     }
@@ -308,6 +314,12 @@ export type HostCommand =
   | { readonly type: "add_external_address"; readonly address: string }
   | {
       readonly type: "submit_action";
+      readonly expected: {
+        readonly table_id: string;
+        readonly hand_number: number;
+        readonly sequence: number;
+        readonly public_state_hash: string;
+      };
       readonly action: "fold" | "check" | "call" | "raise";
       readonly amount?: number;
     }
@@ -336,6 +348,7 @@ export type SidecarEvent =
     }
   | {
       readonly type: "identity_ready";
+      readonly account_fingerprint: string;
       readonly player_id: string;
       readonly device_public_key: string;
       readonly device_label: string;
@@ -343,6 +356,7 @@ export type SidecarEvent =
       readonly recovery_envelope: string;
       readonly remote_replicas: number;
     }
+  | { readonly type: "identity_cleared" }
   | { readonly type: "listen_address"; readonly address: string }
   | { readonly type: "peer_connected"; readonly peer_id: string }
   | { readonly type: "peer_disconnected"; readonly peer_id: string }
@@ -458,6 +472,7 @@ export type SidecarEvent =
     }
   | {
       readonly type: "hand_state";
+      readonly public_state_hash: string;
       readonly table_id: string;
       readonly hand_number: number;
       readonly sequence: number;
@@ -724,8 +739,15 @@ export interface BridgeSnapshot {
   readonly lastWarning: string | null;
 }
 
+export interface IdentityConfirmation {
+  readonly recoveryEnvelope: string;
+  readonly playerId: string;
+  readonly accountFingerprint: string;
+  readonly recoverySecretConfirmed: boolean;
+}
+
 export type CommandResult =
-  | { readonly ok: true }
+  | { readonly ok: true; readonly identity?: IdentityConfirmation }
   | { readonly ok: false; readonly error: string };
 
 export type ConfirmedHostCommandSender = (command: HostCommand) => Promise<CommandResult>;
