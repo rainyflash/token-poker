@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -160,7 +160,21 @@ try {
         -Expected $null `
         -Message 'The empty desktop fixture unexpectedly resolved an executable.'
 
-    Write-Output 'Codex runtime resolution tests passed.'
+    $installerTokens = $null
+    $installerErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $projectRoot 'scripts\install-plugin.ps1'),
+        [ref]$installerTokens,
+        [ref]$installerErrors
+    ) | Out-Null
+    Assert-Equal -Actual $installerErrors.Count -Expected 0 -Message '当前 PowerShell 无法解析真实安装器。'
+
+    if ($PSVersionTable.PSVersion.Major -gt 5) {
+        $legacyPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        & $legacyPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath
+        Assert-Equal -Actual $LASTEXITCODE -Expected 0 -Message 'Windows PowerShell 5.1 回归测试失败。'
+    }
+    Write-Output "Codex runtime resolution tests passed (PowerShell $($PSVersionTable.PSVersion))."
 }
 finally {
     if (Test-Path -LiteralPath $testRoot) {

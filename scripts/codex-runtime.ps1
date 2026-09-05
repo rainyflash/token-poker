@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 
 function Resolve-ExistingFilePath {
     param([AllowNull()][object]$Candidate)
