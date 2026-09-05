@@ -1,5 +1,5 @@
 import { AnimatePresence } from "motion/react";
-import { History, LogOut, PanelRight, ShieldCheck, Wifi } from "lucide-react";
+import { History, LogOut, ShieldCheck, WifiOff } from "lucide-react";
 import { useRef, useState } from "react";
 import type {
   BridgeSnapshot,
@@ -9,13 +9,13 @@ import { useI18n } from "../../core/i18n/use-i18n";
 import type { MessageKey } from "../../core/i18n/messages";
 import { projectPlayerProfile } from "../account/model/player-profile";
 import { Button } from "../../shared/ui/button";
-import { StatusPill } from "../../shared/ui/status-pill";
 import { useSafeLeave } from "../session/model/use-safe-leave";
 import { ActionConsole } from "./components/action-console";
 import { HandInfoPanel } from "./components/hand-info-panel";
 import { PokerTable } from "./components/poker-table";
 import { hasConfirmedOpponent } from "./model/table-presence";
 import { createHandActionCommand, handActionScope } from "./model/action-command";
+import "./table-layout.css";
 
 interface TableViewProps {
   readonly bridge: BridgeSnapshot;
@@ -51,7 +51,6 @@ export function TableView({ bridge, sendConfirmedCommand, onOpenStatistics }: Ta
   const leaving = safeLeave.isPending || bridge.room.localRole === "leaving";
   const canAct =
     hand.canAct && hand.publicStateHash !== null && !actionPending && !hand.sessionInterrupted && !leaving;
-  const awaitingReveal = hand.awaitingReveal;
   const localOutcome = hand.outcomes.find((outcome) => outcome.seat === hand.localSeat);
   const settledMessage =
     localOutcome === undefined
@@ -128,8 +127,8 @@ export function TableView({ bridge, sendConfirmedCommand, onOpenStatistics }: Ta
   };
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-[var(--canvas)]">
-      <header className="flex h-[60px] shrink-0 items-center border-b border-[var(--line)] bg-white/88 px-3 backdrop-blur-xl sm:px-5">
+    <section className="table-view flex h-full min-h-0 flex-col bg-[var(--canvas)]">
+      <header className="table-header flex min-h-14 shrink-0 items-center gap-3 border-b border-[var(--line)] bg-white px-3 py-2 sm:px-5">
         <div className="min-w-0">
           <h1 className="truncate text-[14px] font-semibold tracking-[-0.025em]">
             {t("table.title")}
@@ -140,7 +139,7 @@ export function TableView({ bridge, sendConfirmedCommand, onOpenStatistics }: Ta
               {t("table.playerCount", { count: playerCount })}
             </span>
           </h1>
-          <p className="mt-0.5 text-[10px] text-[var(--muted-light)]">
+          <p className="mt-0.5 text-xs text-[var(--muted)]">
             {t("table.buyInSummary", { minimum: formatTokens(minimumBuyIn), maximum: formatTokens(maximumBuyIn) })}
           </p>
         </div>
@@ -151,8 +150,9 @@ export function TableView({ bridge, sendConfirmedCommand, onOpenStatistics }: Ta
           <Button className="hidden min-[520px]:inline-flex" variant="ghost" size="icon" aria-label={t("table.history")} onClick={onOpenStatistics}>
             <History className="size-4" strokeWidth={1.7} />
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => setShowInfo((value) => !value)} aria-label={t("table.info")}>
-            <PanelRight className="size-4" strokeWidth={1.7} />
+          <Button variant="ghost" size="sm" className="gap-1.5 px-2" onClick={() => setShowInfo((value) => !value)} aria-label={t("table.info")} aria-expanded={showInfo} title={proofLabel}>
+            {bridge.sidecarReady && opponentConnected ? <ShieldCheck className="size-4" strokeWidth={1.7} /> : <WifiOff className="size-4 text-[var(--codex-orange-500)]" strokeWidth={1.7} />}
+            <span className="hidden text-xs min-[960px]:inline">{t("table.info")}</span>
           </Button>
           <Button className="ml-1 min-[520px]:ml-2" size="sm" disabled={leaving} onClick={leaveTable} aria-label={t("table.leave")}>
             <LogOut className="size-3.5" />
@@ -163,49 +163,34 @@ export function TableView({ bridge, sendConfirmedCommand, onOpenStatistics }: Ta
         </div>
       </header>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div className="absolute left-5 top-4 z-30 flex items-center gap-2">
-          <StatusPill
-            label={t(bridge.sidecarReady ? "table.p2pConnected" : "table.p2pConnecting")}
-            tone={bridge.sidecarReady ? "success" : "attention"}
-            dot
-          />
-          <StatusPill
-            icon={Wifi}
-            label={t(opponentConnected ? "table.opponentsConnected" : "table.waitingOpponent")}
-          />
-          <StatusPill icon={ShieldCheck} label={proofLabel} tone="success" />
+      <div className="table-workspace relative min-h-0 flex-1 overflow-y-auto">
+        <div className="table-layout">
+          <div className="table-stage-frame">
+            <PokerTable
+              heroName={profile.displayName}
+              heroAvatarUrl={profile.avatarUrl}
+              heroStack={heroStack}
+              hand={hand}
+            />
+          </div>
+
+          <footer className="table-action-dock">
+            <p role="status" className={`table-action-message ${canAct ? "is-your-turn" : ""}`}>
+              {actionMessage ?? protocolMessage ?? (canAct ? t("table.yourTurn") : inactiveLabel(hand.phase, t) ?? t("table.waitingPlayers"))}
+            </p>
+            <ActionConsole
+              amount={betAmount}
+              minimum={minimumRaise}
+              maximum={maximumRaise}
+              currentBet={hand.currentBet}
+              pot={hand.pot}
+              toCall={hand.toCall}
+              canAct={canAct}
+              onAmountChange={setRequestedBetAmount}
+              onAction={submitAction}
+            />
+          </footer>
         </div>
-
-        <div className="table-stage-frame absolute inset-x-0">
-          <PokerTable
-            heroName={profile.displayName}
-            heroAvatarUrl={profile.avatarUrl}
-            heroStack={heroStack}
-            actionMessage={
-              actionMessage ?? protocolMessage
-            }
-            hand={hand}
-          />
-        </div>
-
-        <ActionConsole
-          amount={betAmount}
-          minimum={minimumRaise}
-          maximum={maximumRaise}
-          currentBet={hand.currentBet}
-          pot={hand.pot}
-          toCall={hand.toCall}
-          canAct={canAct}
-          awaitingReveal={awaitingReveal}
-          inactiveLabel={actionPending ? t("action.submitting") : inactiveLabel(hand.phase, t)}
-          onAmountChange={setRequestedBetAmount}
-          onAction={submitAction}
-        />
-
-        <p className="absolute bottom-5 right-5 text-[9px] text-[var(--muted-light)]">
-          {t("table.disclaimer")}
-        </p>
 
         <AnimatePresence>
           {showInfo ? <HandInfoPanel bridge={bridge} onClose={() => setShowInfo(false)} /> : null}

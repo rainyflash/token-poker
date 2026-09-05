@@ -26,10 +26,11 @@ export function StakeLevelCard({
       type="button"
       onClick={onSelect}
       disabled={!interactive}
+      aria-pressed={selected}
       whileTap={interactive ? { scale: 0.985 } : undefined}
       transition={{ type: "spring", stiffness: 480, damping: 32 }}
       className={cn(
-        "relative min-h-[142px] rounded-[14px] border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]",
+        "stake-level-card relative min-w-0 rounded-[14px] border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] min-[960px]:p-5",
         !affordable && "disabled:cursor-not-allowed disabled:opacity-45",
         locked && affordable && "disabled:cursor-default disabled:opacity-100",
         selected
@@ -39,25 +40,25 @@ export function StakeLevelCard({
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-[13px] font-semibold tracking-[-0.02em]">{t(level.nameKey)}</p>
-          <p className="mt-1 text-[10px] text-[var(--muted-light)]">{t(level.noteKey)}</p>
+          <p className="text-[14px] font-semibold tracking-[-0.02em]">{t(level.nameKey)}</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{t(level.noteKey)}</p>
         </div>
         {selected ? (
-          <span className="grid size-5 place-items-center rounded-full bg-[#2d98e6] text-white">
+          <span className="grid size-5 shrink-0 place-items-center rounded-full bg-[var(--codex-blue-500)] text-white">
             <Check className="size-3" strokeWidth={2.5} />
           </span>
         ) : null}
       </div>
-      <div className="mt-6 flex items-end justify-between">
+      <div className="mt-5 flex flex-wrap items-end justify-between gap-x-3 gap-y-3">
         <div>
-          <p className="text-[10px] text-[var(--muted-light)]">{t("stakeCard.blinds")}</p>
-          <p className="mt-1 text-[17px] font-semibold tabular-nums tracking-[-0.035em]">
+          <p className="text-xs text-[var(--muted)]">{t("stakeCard.blinds")}</p>
+          <p className="mt-1 text-[18px] font-semibold tabular-nums tracking-[-0.035em]">
             {formatTokens(level.smallBlind)} / {formatTokens(level.bigBlind)}
           </p>
         </div>
-        <div className="text-right">
-          <p className="text-[10px] text-[var(--muted-light)]">{t("stakeCard.range")}</p>
-          <p className="mt-1 text-[11px] font-medium tabular-nums">
+        <div>
+          <p className="text-xs text-[var(--muted)]">{t("stakeCard.range")}</p>
+          <p className="mt-1 text-[13px] font-medium tabular-nums">
             {formatTokens(level.minimumBuyIn)}–{formatTokens(level.maximumBuyIn)}
           </p>
         </div>

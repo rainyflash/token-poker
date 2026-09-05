@@ -1136,7 +1136,10 @@ class HostBridgeStore {
   #runPreviewCommand(command: HostCommand): void {
     switch (command.type) {
       case "join_public_pool": {
-        const previewPlayers = 2;
+        const previewPlayers = import.meta.env.DEV &&
+          new URLSearchParams(globalThis.location.search).get("visual-players") === "6" ? 6 : 2;
+        const smallBlindIndex = previewPlayers === 2 ? 0 : 1;
+        const bigBlindIndex = smallBlindIndex + 1;
         const previewLevel = findStakeLevel(command.level_id);
         this.#previewPoolRun += 1;
         this.#schedulePreviewPool(this.#previewPoolRun, 360, {
@@ -1224,7 +1227,7 @@ class HostBridgeStore {
           current_bet: previewLevel.bigBlind,
           next_seat: 1,
           local_seat: 1,
-          to_call: previewLevel.smallBlind,
+          to_call: previewPlayers === 2 ? previewLevel.smallBlind : previewLevel.bigBlind,
           minimum_raise_to: previewLevel.bigBlind * 2,
           maximum_raise_to: command.buy_in,
           can_act: true,
@@ -1237,9 +1240,9 @@ class HostBridgeStore {
             player_id: `preview-${String(index)}`,
             stack:
               command.buy_in -
-              (index === 0 ? previewLevel.smallBlind : index === 1 ? previewLevel.bigBlind : 0),
+              (index === smallBlindIndex ? previewLevel.smallBlind : index === bigBlindIndex ? previewLevel.bigBlind : 0),
             committed:
-              index === 0 ? previewLevel.smallBlind : index === 1 ? previewLevel.bigBlind : 0,
+              index === smallBlindIndex ? previewLevel.smallBlind : index === bigBlindIndex ? previewLevel.bigBlind : 0,
             status: "active" as const,
             last_action: null,
           })),

@@ -25,33 +25,34 @@ export function BuyInControl({
 
   return (
     <div
-      className="rounded-[14px] border border-[var(--line)] bg-white p-5 data-[locked=true]:border-[#d7e8f5]"
+      className="buy-in-control min-w-0"
       data-locked={locked}
     >
       <div className="flex items-start justify-between gap-5">
         <div>
-          <p className="text-[11px] font-medium text-[var(--muted)]">{t("buyIn.title")}</p>
-          <p className="mt-1 text-[24px] font-semibold tabular-nums tracking-[-0.045em]">
-            {formatTokens(value)} <span className="text-[12px] font-medium text-[var(--muted-light)]">Token</span>
+          <p className="text-[13px] font-medium text-[var(--muted)]">{t("buyIn.title")}</p>
+          <p className="mt-1 text-[30px] font-semibold tabular-nums tracking-[-0.045em]">
+            {formatTokens(value)} <span className="text-[13px] font-medium text-[var(--muted)]">Token</span>
           </p>
         </div>
         <div className="text-right">
-          <p className="text-[10px] text-[var(--muted-light)]">{t("buyIn.share")}</p>
-          <p className="mt-1 text-[12px] font-medium tabular-nums">{percentageLabel}</p>
+          <p className="text-xs text-[var(--muted)]">{t("buyIn.share")}</p>
+          <p className="mt-1 text-[13px] font-medium tabular-nums">{percentageLabel}</p>
         </div>
       </div>
 
       <CodexSlider
-        className="mt-6"
+        className="mt-4"
         value={value}
         minimum={level.minimumBuyIn}
         maximum={Math.max(level.minimumBuyIn, effectiveMaximum)}
         step={Math.max(1_000, level.bigBlind)}
         disabled={locked || effectiveMaximum < level.minimumBuyIn}
         ariaLabel={t("buyIn.aria")}
+        valueText={`${formatTokens(value)} Token`}
         onValueChange={onChange}
       />
-      <div className="mt-2 flex justify-between text-[9px] tabular-nums text-[var(--muted-light)]">
+      <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs tabular-nums text-[var(--muted)]">
         <span>{t("buyIn.minimum", { value: formatTokens(level.minimumBuyIn) })}</span>
         <span>{t("buyIn.availableMaximum", { value: formatTokens(effectiveMaximum) })}</span>
       </div>

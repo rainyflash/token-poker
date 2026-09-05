@@ -69,7 +69,7 @@ export function UpdateDialog({ status, sendCommand }: UpdateDialogProps) {
       </Dialog.Trigger>
       <Dialog.Portal container={globalThis.__tokenHoldemPortalRoot}>
         <Dialog.Overlay className="fixed inset-0 z-[999999] bg-black/15 backdrop-blur-[2px]" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[1000000] w-[min(440px,calc(100vw-28px))] -translate-x-1/2 -translate-y-1/2 rounded-[18px] border border-black/[.10] bg-white p-5 text-[var(--ink)] shadow-[0_30px_90px_rgba(18,24,20,.22)] outline-none">
+        <Dialog.Content className="token-poker-portal fixed left-1/2 top-1/2 z-[1000000] max-h-[calc(100dvh-32px)] w-[min(440px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[18px] border border-black/[.10] bg-white p-5 text-[var(--ink)] shadow-[0_30px_90px_rgba(18,24,20,.22)] outline-none">
           <div className="flex items-start gap-3">
             <div className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-[var(--line)] bg-[var(--surface-subtle)]">
               <CircleArrowUp className="size-[17px]" strokeWidth={1.7} />

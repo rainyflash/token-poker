@@ -99,7 +99,7 @@ export function IdentityView({
 
   return (
     <section className="h-full overflow-y-auto bg-white">
-      <div className="min-h-full w-full px-[clamp(24px,4vw,64px)] py-[clamp(24px,4vh,44px)]">
+      <div className="page-content">
         <IdentitySecurityOverview
           identity={bridge.identity}
           accountFingerprint={bridge.accountBinding?.accountFingerprint ?? null}
@@ -115,7 +115,7 @@ export function IdentityView({
           <summary className="flex cursor-pointer list-none items-center gap-3 py-5 text-[12px] font-medium text-[var(--muted)] outline-none transition-colors hover:text-[var(--ink)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
             <Settings2 className="size-4" strokeWidth={1.65} />
             <span>{t("identity.advanced")}</span>
-            <span className="text-[10px] font-normal text-[var(--muted-light)]">
+            <span className="text-xs font-normal text-[var(--muted)]">
               {t("identity.advancedDescription")}
             </span>
             <ChevronDown className="ml-auto size-4 transition-transform duration-200 group-open:rotate-180" strokeWidth={1.65} />
@@ -130,8 +130,8 @@ export function IdentityView({
               >
                 <KeyRound className="size-4 text-[var(--muted)]" strokeWidth={1.65} />
                 <span>
-                  <span className="block text-[11px] font-medium">{t("identity.restoreBackup")}</span>
-                  <span className="mt-1 block text-[9px] text-[var(--muted-light)]">{t("identity.restoreBackupDescription")}</span>
+                  <span className="block text-[13px] font-medium">{t("identity.restoreBackup")}</span>
+                  <span className="mt-1 block text-xs text-[var(--muted)]">{t("identity.restoreBackupDescription")}</span>
                 </span>
               </button>
               <button
@@ -141,8 +141,8 @@ export function IdentityView({
               >
                 <Cloud className="size-4 text-[var(--muted)]" strokeWidth={1.65} />
                 <span>
-                  <span className="block text-[11px] font-medium">{t("identity.restoreRemote")}</span>
-                  <span className="mt-1 block text-[9px] text-[var(--muted-light)]">{t("identity.restoreRemoteDescription")}</span>
+                  <span className="block text-[13px] font-medium">{t("identity.restoreRemote")}</span>
+                  <span className="mt-1 block text-xs text-[var(--muted)]">{t("identity.restoreRemoteDescription")}</span>
                 </span>
               </button>
             </div>

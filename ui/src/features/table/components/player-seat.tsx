@@ -16,35 +16,36 @@ export function PlayerSeat({ player }: { readonly player: TablePlayer }) {
       className={cn(
         "player-seat-anchor absolute z-20",
         `seat-${player.seat}`,
-        player.status === "folded" && "opacity-65 grayscale",
+        player.status === "folded" && "is-folded",
       )}
     >
       <motion.div
         className="player-seat relative"
+        data-acting={player.status === "thinking"}
         initial={{ opacity: 0, y: 8, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ type: "spring", stiffness: 320, damping: 27 }}
       >
-        <div className="absolute bottom-full left-1/2 flex -translate-x-1/2 -space-x-1 pb-px opacity-80">
+        <div className="opponent-hole-cards absolute bottom-full left-1/2 flex -translate-x-1/2 -space-x-1 pb-1">
           <PlayingCard back compact className="-rotate-[4deg]" />
           <PlayingCard back compact className="rotate-[4deg]" />
         </div>
-        <div className="player-seat-card relative flex min-w-[168px] items-center gap-2 rounded-full border border-black/[.085] bg-white/95 py-1.5 pl-1.5 pr-4 shadow-[0_2px_5px_rgba(25,31,27,.05),0_12px_28px_rgba(25,31,27,.07)] backdrop-blur-sm">
+        <div className="player-seat-card relative flex items-center gap-2 rounded-full border border-[var(--line-strong)] bg-white py-1.5 pl-1.5 pr-3 shadow-[var(--codex-shadow-md)]">
           <AvatarGlyph tone={player.avatarTone} className="player-seat-avatar" />
           <div className="min-w-0">
-            <p className="truncate text-[12px] font-semibold tracking-[-0.02em]">{player.name}</p>
-            <p className="mt-0.5 text-[10px] tabular-nums text-[var(--muted-light)]">
+            <p className="player-seat-name truncate text-[13px] font-semibold tracking-[-0.02em]" title={player.name}>{player.name}</p>
+            <p className="mt-0.5 whitespace-nowrap text-xs tabular-nums text-[var(--muted)]">
               {formatTokens(player.stack)} Token
             </p>
           </div>
           {player.status === "thinking" ? (
             <span className="absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-white bg-[#2d96e9]" />
           ) : null}
-          <span className="ml-auto">
+          <span className="ml-auto shrink-0">
             <SeatBadges dealer={player.dealer === true} blind={player.blind} />
           </span>
         </div>
-        <div className="absolute left-1/2 top-full mt-2 flex -translate-x-1/2 flex-col items-center gap-1">
+        <div className="player-seat-status absolute left-1/2 top-full mt-1.5 flex -translate-x-1/2 flex-col items-center gap-1">
           <SeatStatus status={player.status} lastAction={player.lastAction} committed={committed} />
           {player.status === "thinking" ? (
             <TurnTimer

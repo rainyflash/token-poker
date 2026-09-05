@@ -50,7 +50,7 @@ export function AppShell({
 
   return (
     <div className="token-holdem-app flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--canvas)] text-[var(--ink)]">
-      <header className="app-header relative z-50 flex h-[62px] shrink-0 items-center border-b border-[var(--line)] bg-[var(--rail)] px-3 min-[760px]:px-5">
+      <header className="app-header relative z-50 flex h-14 shrink-0 items-center border-b border-[var(--line)] bg-[var(--rail)] px-3 min-[760px]:px-5">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="grid size-8 place-items-center rounded-[10px] border border-black/[.07] bg-white shadow-[var(--codex-shadow-sm)]">
             <CodexMark className="size-[18px]" />
@@ -72,6 +72,7 @@ export function AppShell({
             size="icon"
             onClick={() => onOpenSubview("statistics")}
             aria-label={t("app.openStatistics")}
+            title={t("app.openStatistics")}
             aria-pressed={activeSubview === "statistics"}
           >
             <ChartNoAxesCombined className="size-4" strokeWidth={1.7} />
@@ -81,6 +82,7 @@ export function AppShell({
             size="icon"
             onClick={() => onOpenSubview("identity")}
             aria-label={t("app.openIdentity")}
+            title={t("app.openIdentity")}
             aria-pressed={activeSubview === "identity"}
           >
             <KeyRound className="size-4" strokeWidth={1.7} />
@@ -109,7 +111,7 @@ export function AppShell({
               <p className="max-w-32 truncate text-[12px] font-medium leading-4">
                 {profile.displayName}
               </p>
-              <p className="text-[10px] leading-4 text-[var(--muted-light)]">{usageLabel}</p>
+              <p className="text-xs leading-4 text-[var(--muted)]">{usageLabel}</p>
             </div>
             <RefreshCw
               className={`hidden size-3.5 text-[var(--muted-light)] group-hover:block min-[980px]:block ${usageLoading ? "animate-spin" : ""}`}

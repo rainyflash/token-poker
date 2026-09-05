@@ -1,4 +1,5 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
+import { MotionConfig } from "motion/react";
 import { useState, type ReactNode } from "react";
 import { useHostBridge } from "../core/bridge/host-bridge";
 import { IdentityView } from "../features/identity/identity-view";
@@ -76,23 +77,27 @@ export function App() {
     ) : null;
 
   return (
-    <Tooltip.Provider delayDuration={360}>
-      <AppShell
-        primarySurface={primarySurface}
-        activeSubview={activeSubview}
-        bridge={bridge}
-        onOpenSubview={openSubview}
-        onSyncToken={() => sendCommand({ type: "request_token_refresh" })}
-        sendCommand={sendCommand}
-        onClose={close}
-      >
-        {primaryContent}
-        {activeSubview !== null && subviewContent !== null ? (
-          <SubviewLayer subview={activeSubview} onClose={() => setSubviewState(null)}>
-            {subviewContent}
-          </SubviewLayer>
-        ) : null}
-      </AppShell>
-    </Tooltip.Provider>
+    <MotionConfig reducedMotion="user">
+      <Tooltip.Provider delayDuration={360}>
+        <AppShell
+          primarySurface={primarySurface}
+          activeSubview={activeSubview}
+          bridge={bridge}
+          onOpenSubview={openSubview}
+          onSyncToken={() => sendCommand({ type: "request_token_refresh" })}
+          sendCommand={sendCommand}
+          onClose={close}
+        >
+          <div className="h-full" inert={activeSubview !== null}>
+            {primaryContent}
+          </div>
+          {activeSubview !== null && subviewContent !== null ? (
+            <SubviewLayer subview={activeSubview} onClose={() => setSubviewState(null)}>
+              {subviewContent}
+            </SubviewLayer>
+          ) : null}
+        </AppShell>
+      </Tooltip.Provider>
+    </MotionConfig>
   );
 }

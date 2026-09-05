@@ -44,10 +44,11 @@ export function TurnTimer({ deadlineUnixMs, durationMs, className }: TurnTimerPr
   return (
     <div
       className={cn(
-        "flex h-6 min-w-[108px] items-center gap-2 rounded-full border border-black/[.075] bg-white/94 px-2.5 shadow-sm backdrop-blur-sm",
+        "turn-timer flex h-7 w-[116px] items-center gap-2 rounded-full border border-[var(--line)] bg-white px-2.5 shadow-[var(--codex-shadow-sm)]",
         className,
       )}
       aria-label={t("player.turnRemaining", { seconds })}
+      role="timer"
     >
       <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-black/[.08]">
         <span
@@ -58,7 +59,7 @@ export function TurnTimer({ deadlineUnixMs, durationMs, className }: TurnTimerPr
           style={{ width: `${String(progress * 100)}%` }}
         />
       </span>
-      <span className={cn("w-6 text-right text-[9px] font-semibold tabular-nums", urgent && "text-[#c84728]") }>
+      <span className={cn("w-7 text-right text-xs font-semibold tabular-nums", urgent && "text-[#b53a20]") }>
         {seconds}s
       </span>
     </div>

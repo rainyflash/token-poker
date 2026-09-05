@@ -58,12 +58,12 @@ export function HandInfoPanel({ bridge, onClose }: HandInfoPanelProps) {
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 24, opacity: 0 }}
       transition={{ type: "spring", stiffness: 380, damping: 34 }}
-      className="absolute bottom-4 right-4 top-[76px] z-50 w-[300px] rounded-[16px] border border-black/[.09] bg-white/96 p-4 shadow-[0_20px_60px_rgba(20,25,22,.13)] backdrop-blur-xl"
+      className="absolute right-3 top-3 z-50 max-h-[calc(100%-24px)] w-[min(340px,calc(100%-24px))] overflow-y-auto rounded-[16px] border border-[var(--line-strong)] bg-white p-5 shadow-[var(--codex-shadow-2xl)]"
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-light)]">
-            Hand #{String(hand.handNumber)}
+          <p className="text-xs font-medium text-[var(--muted)]">
+            {t("table.handNumber", { number: hand.handNumber })}
           </p>
           <h2 className="mt-1 text-[16px] font-semibold tracking-[-0.03em]">{t("handInfo.title")}</h2>
         </div>
@@ -81,8 +81,8 @@ export function HandInfoPanel({ bridge, onClose }: HandInfoPanelProps) {
                 <Icon className="size-4 text-[var(--muted)]" strokeWidth={1.7} />
               </div>
               <div>
-                <p className="text-[10px] text-[var(--muted-light)]">{row.label}</p>
-                <p className={`mt-0.5 text-[12px] font-medium ${row.tone}`}>{row.value}</p>
+                <p className="text-xs text-[var(--muted)]">{row.label}</p>
+                <p className={`mt-1 text-[13px] font-medium ${row.tone}`}>{row.value}</p>
               </div>
             </div>
           );
@@ -90,13 +90,14 @@ export function HandInfoPanel({ bridge, onClose }: HandInfoPanelProps) {
       </div>
 
       <div className="mt-5 border-t border-black/[.06] pt-4">
-        <p className="text-[10px] font-medium text-[var(--muted)]">{t("handInfo.transcript")}</p>
-        <code className="mt-2 block break-all rounded-[9px] bg-[#f5f6f4] p-3 font-mono text-[9px] leading-4 text-[var(--muted)]">
+        <p className="text-xs font-medium text-[var(--muted)]">{t("handInfo.transcript")}</p>
+        <code className="mt-2 block break-all rounded-[9px] bg-[var(--surface-subtle)] p-3 font-mono text-xs leading-5 text-[var(--muted)]">
           {hand.transcriptHash ?? t("handInfo.noTranscript")}
         </code>
-        <p className="mt-3 text-[10px] leading-4 text-[var(--muted-light)]">
+        <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
           {t("handInfo.receiptRule")}
         </p>
+        <p className="mt-3 text-xs text-[var(--muted)]">{t("table.disclaimer")}</p>
       </div>
     </motion.aside>
   );

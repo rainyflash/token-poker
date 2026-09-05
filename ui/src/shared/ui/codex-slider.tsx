@@ -11,6 +11,7 @@ interface CodexSliderProps {
   readonly maximum: number;
   readonly step: number;
   readonly ariaLabel: string;
+  readonly valueText?: string;
   readonly disabled?: boolean;
   readonly className?: string;
   readonly onValueChange: (value: number) => void;
@@ -22,6 +23,7 @@ export function CodexSlider({
   maximum,
   step,
   ariaLabel,
+  valueText,
   disabled = false,
   className,
   onValueChange,
@@ -72,7 +74,7 @@ export function CodexSlider({
             })}
           </span>
         </Slider.Track>
-        <Slider.Thumb aria-label={ariaLabel} asChild>
+        <Slider.Thumb aria-label={ariaLabel} aria-valuetext={valueText} asChild>
           <motion.span
             whileTap={disabled ? undefined : { scale: 32 / 28 }}
             transition={{ type: "spring", stiffness: 420, damping: 38, mass: 1 }}

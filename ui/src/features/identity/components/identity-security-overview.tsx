@@ -51,7 +51,7 @@ function DeviceDetail({ icon: Icon, label, value, metadata, mono = false }: Devi
       </dt>
       <dd className="min-w-0 font-medium">{value}</dd>
       <dd
-        className={`col-start-2 min-w-0 truncate text-[var(--muted-light)] min-[680px]:col-start-auto ${mono ? "font-mono" : ""}`}
+        className={`col-start-2 min-w-0 truncate text-[var(--muted)] min-[680px]:col-start-auto ${mono ? "font-mono" : ""}`}
       >
         {metadata}
       </dd>
@@ -86,7 +86,7 @@ export function IdentitySecurityOverview({
             <Fingerprint className="size-3.5" strokeWidth={1.7} />
             {t("identity.accountBound")}
           </p>
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-[var(--muted-light)]">
+          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-[var(--muted)]">
             <code className="font-mono">
               {identityReady ? compactPlayerId(identity.playerId) : t("identity.creating")}
             </code>
@@ -96,7 +96,7 @@ export function IdentitySecurityOverview({
             </span>
           </div>
           {statusMessage ? (
-            <p className="mt-3 text-[10px] leading-4 text-[var(--codex-red-500)]">
+            <p className="mt-3 text-xs leading-4 text-[var(--codex-red-500)]">
               {statusMessage}
             </p>
           ) : null}
@@ -143,7 +143,7 @@ export function IdentitySecurityOverview({
             <KeyRound className="mt-0.5 size-4 shrink-0 text-[var(--muted)]" strokeWidth={1.65} />
             <div>
               <p className="text-[12px] font-medium">{t("identity.recoveryBackup")}</p>
-              <p className="mt-1 text-[10px] leading-5 text-[var(--muted-light)]">
+              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
                 {recoveryReady
                   ? t("identity.recoveryReady")
                   : identityReady
@@ -157,7 +157,7 @@ export function IdentitySecurityOverview({
             {t(copied ? "identity.backupCopied" : "identity.exportBackup")}
           </Button>
         </div>
-        <div className="mt-5 flex items-center justify-between border-t border-[var(--line)] pt-4 text-[10px] text-[var(--muted-light)]">
+        <div className="mt-5 flex items-center justify-between border-t border-[var(--line)] pt-4 text-xs text-[var(--muted)]">
           <span>{t("identity.boundFingerprint")}</span>
           <code className="max-w-[72%] truncate font-mono">
             {accountFingerprint ?? t("identity.awaitingBinding")}

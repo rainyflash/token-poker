@@ -29,7 +29,7 @@ export function SeatStatus({ status, lastAction, committed }: SeatStatusProps) {
   if (label === null) return null;
 
   return (
-    <div className="inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full border border-black/[.075] bg-white/94 px-2.5 text-[9px] text-[var(--muted)] shadow-sm backdrop-blur-sm">
+    <div className="seat-status inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--line)] bg-white px-3 text-xs text-[var(--muted)] shadow-[var(--codex-shadow-sm)]" data-action={status === "all-in" ? "all-in" : lastAction}>
       <span>{label}</span>
       {committed > 0 ? (
         <strong className="font-semibold tabular-nums text-[var(--ink)]">

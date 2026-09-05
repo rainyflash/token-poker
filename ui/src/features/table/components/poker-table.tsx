@@ -1,9 +1,7 @@
-import { ShieldCheck } from "lucide-react";
 import { motion } from "motion/react";
 import type { HandSnapshot } from "../../../core/bridge/contracts";
 import { useI18n } from "../../../core/i18n/use-i18n";
 import { AccountAvatar } from "../../../shared/ui/account-avatar";
-import { StatusPill } from "../../../shared/ui/status-pill";
 import { PlayerSeat } from "./player-seat";
 import { PlayingCard } from "./playing-card";
 import { SeatBadges } from "./seat-badges";
@@ -20,7 +18,6 @@ interface PokerTableProps {
   readonly heroName: string;
   readonly heroAvatarUrl: string | null;
   readonly heroStack: number;
-  readonly actionMessage: string | null;
   readonly hand: HandSnapshot;
 }
 
@@ -119,7 +116,6 @@ export function PokerTable({
   heroName,
   heroAvatarUrl,
   heroStack,
-  actionMessage,
   hand,
 }: PokerTableProps) {
   const { t, formatTokens } = useI18n();
@@ -152,19 +148,8 @@ export function PokerTable({
     hand.localSeat === null
       ? undefined
       : blindForSeat(hand.localSeat, hand.dealerSeat, hand.seats.length);
-  const proofLabel =
-    hand.phase === "revealing"
-      ? t("table.proofReveal")
-      : hand.phase === "receipt_consensus"
-        ? t("table.proofReceipt")
-        : hand.phase === "between_hands" || hand.phase === "settled"
-        ? t("table.proofHandArchived")
-        : hand.phase === "interrupted"
-          ? t("table.proofDisconnected")
-        : t("table.mentalPokerVerified");
-
   return (
-    <div className="poker-stage grid h-full w-full place-items-center">
+    <div className="poker-stage">
       <div className="poker-geometry relative">
         <div className="poker-table absolute inset-0" aria-hidden="true">
           <div className="poker-table-felt absolute inset-[10px]" />
@@ -174,16 +159,16 @@ export function PokerTable({
           <PlayerSeat key={player.id} player={player} />
         ))}
 
-        <div className="pot-indicator absolute left-1/2 top-[38.5%] z-10 -translate-x-1/2 -translate-y-1/2">
-          <div className="inline-flex items-baseline gap-2 rounded-full border border-black/[.075] bg-white/88 px-4 py-1.5 shadow-sm backdrop-blur-sm">
-          <span className="text-[10px] text-[var(--muted-light)]">{t("table.pot")}</span>
-          <strong className="text-[13px] font-semibold tabular-nums">
-            {formatTokens(hand.pot)} Token
-          </strong>
-        </div>
+        <div className="pot-indicator absolute left-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
+          <div className="inline-flex items-baseline gap-2 whitespace-nowrap rounded-full border border-[var(--line)] bg-white px-4 py-1.5 shadow-[var(--codex-shadow-sm)]">
+            <span className="text-xs text-[var(--muted)]">{t("table.pot")}</span>
+            <strong className="text-base font-semibold tabular-nums">
+              {formatTokens(hand.pot)} Token
+            </strong>
+          </div>
         </div>
 
-        <div className="community-cards absolute left-1/2 top-[54%] z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center gap-2">
+        <div className="community-cards absolute left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center gap-2">
           {communityCards.map((card, index) => (
             <PlayingCard
               key={`${card?.rank ?? "back"}-${String(index)}`}
@@ -194,21 +179,15 @@ export function PokerTable({
           ))}
         </div>
 
-        <StatusPill
-          icon={ShieldCheck}
-          label={proofLabel}
-          tone="success"
-          className="proof-indicator absolute left-1/2 top-[69%] z-10 h-7 -translate-x-1/2 -translate-y-1/2 bg-white/78"
-        />
-
         <div className="hero-seat-anchor absolute left-1/2 top-full z-30 -translate-x-1/2 -translate-y-1/2">
           <motion.div
             className="hero-seat relative"
+            data-acting={heroStatus === "thinking"}
             initial={{ y: 12, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ type: "spring", stiffness: 300, damping: 26 }}
           >
-            <div className="absolute bottom-full left-1/2 flex -translate-x-1/2 -space-x-1 pb-px">
+            <div className="hero-hole-cards absolute bottom-full left-1/2 flex -translate-x-1/2 -space-x-1 pb-1">
               {heroCards.map((card, index) => (
                 <PlayingCard
                   key={card === null ? `private-back-${String(index)}` : `${card.rank}-${card.suit}`}
@@ -218,22 +197,22 @@ export function PokerTable({
                 />
               ))}
             </div>
-            <div className="flex min-w-[184px] items-center gap-2 rounded-full border-2 border-[#249af1] bg-white py-1.5 pl-1.5 pr-4 shadow-[0_3px_7px_rgba(25,31,27,.06),0_14px_36px_rgba(36,130,197,.12)]">
+            <div className="hero-seat-card flex items-center gap-2 rounded-full border-2 border-[var(--codex-blue-300)] bg-white py-1.5 pl-1.5 pr-3 shadow-[var(--codex-shadow-md)]">
               <AccountAvatar name={heroName} src={heroAvatarUrl} className="size-10" />
               <div className="min-w-0">
-                <p className="truncate text-[12px] font-semibold">{heroName}</p>
-                <p className="mt-0.5 text-[10px] tabular-nums text-[var(--muted-light)]">
+                <p className="hero-seat-name truncate text-[13px] font-semibold" title={heroName}>{heroName}</p>
+                <p className="mt-0.5 whitespace-nowrap text-xs tabular-nums text-[var(--muted)]">
                   {formatTokens(liveHeroStack)} Token
                 </p>
               </div>
-              <span className="ml-auto">
+              <span className="ml-auto shrink-0">
                 <SeatBadges
                   dealer={hand.localSeat !== null && hand.dealerSeat === hand.localSeat}
                   blind={heroBlind}
                 />
               </span>
             </div>
-            <div className="absolute right-full top-1/2 mr-2 -translate-y-1/2">
+            <div className="hero-seat-status">
               <SeatStatus
                 status={heroStatus}
                 lastAction={heroSeat?.lastAction}
@@ -242,16 +221,11 @@ export function PokerTable({
             </div>
             {heroStatus === "thinking" ? (
               <TurnTimer
-                className="absolute left-full top-1/2 ml-2 -translate-y-1/2"
+                className="hero-seat-timer"
                 deadlineUnixMs={hand.turnDeadlineUnixMs}
                 durationMs={hand.actionTimeoutMs}
               />
             ) : null}
-            <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2">
-              <div className="whitespace-nowrap rounded-full border border-black/[.075] bg-white/90 px-3 py-1 text-[10px] text-[var(--muted)] shadow-sm">
-                {actionMessage ?? t(hand.canAct ? "table.yourTurn" : "table.waitingPlayers")}
-              </div>
-            </div>
           </motion.div>
         </div>
       </div>

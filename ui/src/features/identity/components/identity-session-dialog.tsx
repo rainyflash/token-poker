@@ -143,7 +143,7 @@ export function IdentitySessionDialog({
     <Dialog.Root open={action !== null} onOpenChange={changeOpen}>
       <Dialog.Portal container={globalThis.__tokenHoldemPortalRoot}>
         <Dialog.Overlay className="fixed inset-0 z-[999999] bg-black/15 backdrop-blur-[2px] data-[state=open]:animate-in" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[1000000] w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-[18px] border border-black/[.10] bg-white p-5 text-[var(--ink)] shadow-[0_30px_90px_rgba(18,24,20,.22)] outline-none">
+        <Dialog.Content className="token-poker-portal fixed left-1/2 top-1/2 z-[1000000] max-h-[calc(100dvh-32px)] w-[min(460px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[18px] border border-black/[.10] bg-white p-5 text-[var(--ink)] shadow-[0_30px_90px_rgba(18,24,20,.22)] outline-none">
           <div className="flex items-start justify-between">
             <div className="flex items-start gap-3">
               <div className="grid size-9 place-items-center rounded-[10px] border border-[#dce9df] bg-[#f7fbf7] text-[#477d50]">

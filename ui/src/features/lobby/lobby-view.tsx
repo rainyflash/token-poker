@@ -1,5 +1,5 @@
-import { Radio, RefreshCw, ShieldCheck, Users, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDown, Info, RefreshCw, ShieldCheck, Users, X } from "lucide-react";
+import { useState } from "react";
 import type {
   BridgeSnapshot,
   CommandResult,
@@ -7,7 +7,6 @@ import type {
 } from "../../core/bridge/contracts";
 import { useI18n } from "../../core/i18n/use-i18n";
 import { Button } from "../../shared/ui/button";
-import { SectionHeader } from "../../shared/ui/section-header";
 import { StatusPill } from "../../shared/ui/status-pill";
 import { BuyInControl } from "./components/buy-in-control";
 import { FriendRoomDialog } from "./components/friend-room-dialog";
@@ -24,26 +23,28 @@ interface LobbyViewProps {
 }
 
 export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
-  const { t, formatTokens } = useI18n();
+  const { t } = useI18n();
   const availableTokens = bridge.tokenSnapshot?.lifetimeTokens ?? 0;
   const usageLoading = bridge.officialUsage.phase === "loading";
   const usageFailed = bridge.officialUsage.phase === "error";
   const [selectedLevelId, setSelectedLevelId] = useState(DEFAULT_STAKE_LEVEL_ID);
-  const level = useMemo(() => findStakeLevel(selectedLevelId), [selectedLevelId]);
+  const level = findStakeLevel(selectedLevelId);
   const [requestedBuyIn, setRequestedBuyIn] = useState(level.minimumBuyIn);
   const [message, setMessage] = useState<string | null>(null);
   const isMatching = bridge.pool.status !== "idle";
   const canEnter =
     availableTokens >= level.minimumBuyIn && bridge.sidecarReady && bridge.identity !== null;
   const canAutoMatch = canEnter && bridge.discovery.registeredNodes.size > 0;
-  const buyIn = Math.min(level.maximumBuyIn, Math.max(level.minimumBuyIn, requestedBuyIn));
+  const buyIn = Math.min(
+    Math.max(level.minimumBuyIn, Math.min(level.maximumBuyIn, availableTokens)),
+    Math.max(level.minimumBuyIn, requestedBuyIn),
+  );
+  const networkReady = bridge.sidecarReady && bridge.discovery.registeredNodes.size > 0;
 
   const selectLevel = (levelId: string): void => {
     const next = findStakeLevel(levelId);
     setSelectedLevelId(levelId);
-    setRequestedBuyIn(
-      Math.min(next.maximumBuyIn, Math.max(next.minimumBuyIn, Math.min(availableTokens, next.minimumBuyIn))),
-    );
+    setRequestedBuyIn(next.minimumBuyIn);
     setMessage(null);
   };
 
@@ -62,28 +63,19 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
   };
 
   return (
-    <section className="h-full overflow-y-auto bg-[var(--canvas)]">
-      <div className="min-h-full w-full px-[clamp(24px,4vw,64px)] py-[clamp(24px,4vh,44px)]">
-        <SectionHeader
-          eyebrow={t("lobby.eyebrow")}
-          title={t("lobby.title")}
-          description={t("lobby.description")}
-          action={
-            <div className="flex items-center gap-2">
-              <StatusPill label={t(bridge.sidecarReady ? "lobby.localNodeReady" : "lobby.localNodeStarting")} tone={bridge.sidecarReady ? "success" : "attention"} dot />
-              <StatusPill
-                label={
-                  bridge.discovery.registeredNodes.size > 0
-                    ? t("lobby.communityConnected")
-                    : bridge.discovery.nodes.length > 0
-                      ? t("lobby.communityConnecting")
-                      : t("lobby.discoveryMissing")
-                }
-                tone={bridge.discovery.registeredNodes.size > 0 ? "success" : "attention"}
-              />
-            </div>
-          }
-        />
+    <section className="lobby-view h-full overflow-y-auto bg-[var(--canvas)]">
+      <div className="page-content lobby-content">
+        <header className="lobby-heading flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-[30px] font-semibold tracking-[-0.04em]">{t("lobby.title")}</h1>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("lobby.shortDescription")}</p>
+          </div>
+          <StatusPill
+            label={t(networkReady ? "lobby.networkReady" : "lobby.communityConnecting")}
+            tone={networkReady ? "neutral" : "attention"}
+            dot
+          />
+        </header>
 
         {bridge.tokenSnapshot === null ? (
           <div
@@ -96,7 +88,7 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
           >
             <div className="min-w-0">
               <p
-                className={`text-[11px] font-medium ${
+                className={`text-[13px] font-medium ${
                   usageFailed ? "text-[var(--codex-red-500)]" : "text-[#276b9b]"
                 }`}
               >
@@ -107,7 +99,7 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
                     : t("lobby.usageMissing")}
               </p>
               <p
-                className={`mt-1 text-[10px] leading-4 ${
+                className={`mt-1 text-[12px] leading-5 ${
                   usageFailed ? "text-[#8b4a47]" : "text-[#628299]"
                 }`}
               >
@@ -129,7 +121,7 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
           </div>
         ) : null}
 
-        <div className="mt-8 grid grid-cols-1 gap-3 min-[640px]:grid-cols-2 xl:grid-cols-4">
+        <div className="stake-level-grid mt-7 grid grid-cols-2 gap-3 min-[960px]:grid-cols-4" role="group" aria-label={t("lobby.chooseLevel")}>
           {STAKE_LEVELS.map((stakeLevel) => (
             <StakeLevelCard
               key={stakeLevel.id}
@@ -142,8 +134,8 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
           ))}
         </div>
 
-        <div className="mt-5 grid grid-cols-1 gap-5 min-[960px]:grid-cols-[minmax(0,1.45fr)_minmax(280px,.85fr)]">
-          <div>
+        <div className="lobby-entry mt-5 grid items-center gap-6 rounded-2xl border border-[var(--line)] bg-white p-5 min-[760px]:grid-cols-[minmax(0,1fr)_260px] min-[960px]:gap-10 min-[960px]:p-6">
+          <div className="min-w-0">
             <BuyInControl
               level={level}
               value={buyIn}
@@ -153,33 +145,11 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
             />
           </div>
 
-          <aside className="rounded-[16px] border border-black/[.09] bg-[#f8faf8] p-5 shadow-[0_12px_30px_rgba(26,34,29,.05)]">
-            <div className="flex items-center justify-between">
-              <div className="grid size-9 place-items-center rounded-[10px] border border-black/[.06] bg-white shadow-sm">
-                <Radio className="size-[17px] text-[#2b8acb]" strokeWidth={1.8} />
-              </div>
-              <span className="text-[10px] font-medium text-[var(--muted-light)]">{level.id}</span>
-            </div>
-            <h2 className="mt-5 text-[17px] font-semibold tracking-[-0.035em]">{t(level.nameKey)}</h2>
-            <dl className="mt-4 space-y-2.5 text-[11px]">
-              <div className="flex justify-between">
-                <dt className="text-[var(--muted-light)]">{t("lobby.buyIn")}</dt>
-                <dd className="font-medium tabular-nums">{formatTokens(buyIn)} Token</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-[var(--muted-light)]">{t("lobby.strategy")}</dt>
-                <dd className="font-medium">{t("lobby.strategyValue")}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-[var(--muted-light)]">{t("lobby.transport")}</dt>
-                <dd className="font-medium">{t("lobby.transportValue")}</dd>
-              </div>
-            </dl>
-
+          <div className="lobby-entry-actions grid gap-3">
             <Button
               variant={isMatching ? "danger" : "primary"}
               size="lg"
-              className="mt-6 w-full"
+              className="w-full rounded-full"
               disabled={!canAutoMatch}
               onClick={toggleMatchmaking}
             >
@@ -187,23 +157,20 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
               {t(isMatching ? "lobby.stopSearch" : "lobby.quickSeat")}
             </Button>
             {bridge.identity === null ? (
-              <p className="mt-2 text-center text-[9px] text-[#9a6c22]">{t("lobby.identityRequired")}</p>
+              <p className="text-xs leading-5 text-[#805919]">{t("lobby.identityRequired")}</p>
             ) : null}
             {bridge.identity !== null && bridge.discovery.nodes.length === 0 ? (
-              <p className="mt-2 text-center text-[9px] text-[#9a6c22]">
+              <p className="text-xs leading-5 text-[#805919]">
                 {t("lobby.discoveryRequired")}
               </p>
             ) : null}
             {bridge.identity !== null &&
             bridge.discovery.nodes.length > 0 &&
             bridge.discovery.registeredNodes.size === 0 ? (
-              <p className="mt-2 text-center text-[9px] text-[#9a6c22]">
+              <p className="text-xs leading-5 text-[#805919]">
                 {t("lobby.discoveryConnecting")}
               </p>
             ) : null}
-            <div className="my-3 flex items-center gap-3 text-[9px] text-[var(--muted-light)] before:h-px before:flex-1 before:bg-black/[.07] after:h-px after:flex-1 after:bg-black/[.07]">
-              {t("lobby.or")}
-            </div>
             <FriendRoomDialog
               level={level}
               buyIn={buyIn}
@@ -213,20 +180,28 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
               sendCommand={sendCommand}
             />
             {message || bridge.lastWarning ? (
-              <p className="mt-3 text-[10px] leading-4 text-[var(--muted)]">{bridge.lastWarning ?? message}</p>
+              <p role="status" className="text-xs leading-5 text-[var(--muted)]">{bridge.lastWarning ?? message}</p>
             ) : null}
-          </aside>
-        </div>
-
-        <div className="mt-5 flex items-start gap-3 rounded-[13px] border border-[#dce9df] bg-[#f8fbf8] px-4 py-3.5">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[#477d50]" strokeWidth={1.8} />
-          <div>
-            <p className="text-[11px] font-medium text-[#315e39]">{t("lobby.securityTitle")}</p>
-            <p className="mt-1 text-[10px] leading-4 text-[#66806b]">
-              {t("lobby.securityDescription")}
-            </p>
           </div>
         </div>
+
+        <details className="lobby-details group mt-5 border-t border-[var(--line)]">
+          <summary className="flex cursor-pointer list-none items-center gap-2 py-4 text-xs text-[var(--muted)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
+            <Info className="size-4" />
+            <span>{t("lobby.details")}</span>
+            <ChevronDown className="ml-auto size-4 transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="grid gap-4 pb-5 text-xs leading-6 text-[var(--muted)] min-[760px]:grid-cols-2">
+            <div>
+              <p>{t("lobby.description")}</p>
+              <p className="mt-2">{t("lobby.transport")}: {t("lobby.transportValue")}</p>
+            </div>
+            <div>
+              <p className="flex items-center gap-2 font-medium text-[var(--ink)]"><ShieldCheck className="size-4" />{t("lobby.securityTitle")}</p>
+              <p className="mt-2">{t("lobby.securityDescription")}</p>
+            </div>
+          </div>
+        </details>
       </div>
     </section>
   );
