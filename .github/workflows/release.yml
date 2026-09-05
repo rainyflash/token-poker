@@ -56,6 +56,8 @@ jobs:
           ./scripts/test-codex-runtime-resolution.ps1
           ./scripts/test-forward-update-contract.ps1
           ./scripts/test-network-suite.ps1
+          node --test scripts/integration-runtime.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python ./scripts/build-plugin.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./scripts/install-plugin.ps1 -ValidateOnly

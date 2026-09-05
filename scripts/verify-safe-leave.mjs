@@ -1,15 +1,13 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { integrationSidecarPath } from "./integration-runtime.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
-const sidecarPath = resolve(
-  process.env.TOKEN_HOLDEM_SIDECAR_PATH
-    ?? join(projectRoot, "target", "debug", "token-holdem-sidecar.exe"),
-);
+const sidecarPath = integrationSidecarPath(projectRoot);
 const LEVEL_ID = "1m-2m";
 
 class SidecarProbe {

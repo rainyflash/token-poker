@@ -2,10 +2,11 @@ import { spawn } from "node:child_process";
 import { access, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { integrationSidecarPath } from "./integration-runtime.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
-const sidecarPath = join(projectRoot, "target", "debug", "token-holdem-sidecar.exe");
+const sidecarPath = integrationSidecarPath(projectRoot);
 const integrationRoot = resolve(projectRoot, "target", "integration");
 const archiveDirectory = resolve(
   integrationRoot,
