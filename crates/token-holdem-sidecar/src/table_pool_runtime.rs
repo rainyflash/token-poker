@@ -679,6 +679,9 @@ fn decide_singleton_convergence(
     let candidates = active
         .advertisements
         .values()
+        .filter(|advertisement| {
+            is_remote_admission(advertisement.admission_peer_id(), *swarm.local_peer_id())
+        })
         .filter(|advertisement| advertisement.table_id() != local.table_id)
         .filter(|advertisement| !active.rejected_tables.contains(&advertisement.table_id()))
         .filter(|advertisement| {
@@ -704,6 +707,9 @@ fn decide_next_action(
     let candidates = active
         .advertisements
         .values()
+        .filter(|advertisement| {
+            is_remote_admission(advertisement.admission_peer_id(), *swarm.local_peer_id())
+        })
         .filter(|advertisement| !active.rejected_tables.contains(&advertisement.table_id()))
         .cloned()
         .collect::<Vec<_>>();
@@ -743,6 +749,10 @@ fn decide_next_action(
         table_id,
         creator_player_id: active.local_ticket.player_id(),
     }))
+}
+
+fn is_remote_admission(admission_peer_id: &[u8], local_peer_id: PeerId) -> bool {
+    PeerId::from_bytes(admission_peer_id).is_ok_and(|peer_id| peer_id != local_peer_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1026,6 +1036,14 @@ fn synchronize_explicit_pool_peers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 匹配重试不得加入目录中残留的本机牌桌() {
+        let local = PeerId::random();
+        assert!(!is_remote_admission(&local.to_bytes(), local));
+        assert!(!is_remote_admission(&[], local));
+        assert!(is_remote_admission(&PeerId::random().to_bytes(), local));
+    }
 
     #[test]
     fn 创建顺位延迟不会重新拆分人数池() {

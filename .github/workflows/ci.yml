@@ -36,14 +36,18 @@ jobs:
         shell: pwsh
         run: |
           rustup show active-toolchain
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustc --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --version
 
       - name: Check Rust formatting and lints
         shell: pwsh
         run: |
           cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run Rust tests
@@ -54,6 +58,7 @@ jobs:
         shell: pwsh
         run: |
           cargo build --locked -p token-holdem-sidecar
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo check --manifest-path fuzz/Cargo.toml --bins --locked
 
       - name: Build and test UI
@@ -61,8 +66,11 @@ jobs:
         shell: pwsh
         run: |
           npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run lint
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm test
 
       - name: Build and test Codex plugin
@@ -70,7 +78,9 @@ jobs:
         shell: pwsh
         run: |
           npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm test
 
       - name: Validate scripts and source language
@@ -81,19 +91,22 @@ jobs:
           ./scripts/test-installer-entrypoint.ps1
           ./scripts/test-codex-runtime-resolution.ps1
           ./scripts/test-forward-update-contract.ps1
-          python -m py_compile scripts/build-plugin.py
-          python -m py_compile scripts/check-rust-security-baseline.py
-          python -m py_compile scripts/set-version.py
+          ./scripts/test-network-suite.ps1
+          python -m py_compile scripts/build-plugin.py scripts/check-rust-security-baseline.py scripts/set-version.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/check-rust-security-baseline.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/check-source-language.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --test scripts/community-network.test.mjs
+
+      - name: Build production networking runtime
+        shell: pwsh
+        run: cargo build --release --locked -p token-holdem-sidecar
 
       - name: Verify volunteer networking and complete sessions
         shell: pwsh
+        env:
+          TOKEN_HOLDEM_SIDECAR_PATH: ${{ github.workspace }}\target\release\token-holdem-sidecar.exe
         run: |
-          node scripts/verify-volunteer-network.mjs
-          node scripts/verify-p2p-hand.mjs
-          node scripts/verify-p2p-hand.mjs --relay
-          node scripts/verify-dynamic-table.mjs
-          node scripts/verify-safe-leave.mjs
-          node scripts/verify-complete-session.mjs
+          ./scripts/verify-network-suite.ps1

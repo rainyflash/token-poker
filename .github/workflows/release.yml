@@ -55,8 +55,16 @@ jobs:
           ./scripts/test-installer-entrypoint.ps1
           ./scripts/test-codex-runtime-resolution.ps1
           ./scripts/test-forward-update-contract.ps1
+          ./scripts/test-network-suite.ps1
           python ./scripts/build-plugin.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./scripts/install-plugin.ps1 -ValidateOnly
+
+      - name: Verify production networking before publication
+        shell: pwsh
+        env:
+          TOKEN_HOLDEM_SIDECAR_PATH: ${{ github.workspace }}\target\release\token-holdem-sidecar.exe
+        run: ./scripts/verify-network-suite.ps1
 
       - name: Validate update manifest
         shell: pwsh
