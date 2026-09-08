@@ -2,6 +2,24 @@
 
 All notable changes to Token Poker are documented here. The project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.26] - 2026-09-07
+
+### Changed
+
+- Redesign the lobby with an aligned stake list and a dedicated buy-in panel, using Codex-style typography, controls, and a compact account toolbar.
+- Keep history, help, updates, language, and account access in the header; preserve state-driven transitions between matchmaking and the table.
+- Refine selected states, keyboard focus, pill buttons, divider contrast, and the large slider. Expose the exact buy-in amount to assistive technology and on hover.
+- Adapt the lobby and toolbar for narrow windows while preserving both English and Chinese layouts.
+
+### Fixed
+
+- Keep stake ranges browseable while official usage is unavailable or insufficient, but prevent public-table entry until usage, identity, and discovery are ready. Show the reason instead of an unexplained disabled button.
+- Harden MCP UI resume and event polling across hidden views, cached tool results, and delayed host responses. Bound polling retries and keep fullscreen negotiation from blocking startup.
+
+### Added
+
+- Add regression coverage for buy-in bounds, account-balance caps, and MCP view lifecycle recovery.
+
 ## [0.4.18] - 2026-08-27
 
 ### Fixed

@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Check, Copy, DoorOpen, Link2, X } from "lucide-react";
+import { Check, Copy, Link2, Users, X } from "lucide-react";
 import { useState } from "react";
 import type {
   CommandResult,
@@ -78,8 +78,8 @@ export function FriendRoomDialog({
   return (
     <Dialog.Root>
       <Dialog.Trigger asChild>
-        <Button size="lg" className="w-full rounded-full">
-          <DoorOpen className="size-4" />
+        <Button size="lg" className="lobby-entry-button" data-secondary="true">
+          <Users className="size-5" strokeWidth={1.7} />
           {t("friend.open")}
         </Button>
       </Dialog.Trigger>

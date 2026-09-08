@@ -1,21 +1,15 @@
-import { ChevronDown, Info, RefreshCw, ShieldCheck, Users, X } from "lucide-react";
+import { RefreshCw, X } from "lucide-react";
 import { useState } from "react";
-import type {
-  BridgeSnapshot,
-  CommandResult,
-  HostCommand,
-} from "../../core/bridge/contracts";
+import type { BridgeSnapshot, CommandResult, HostCommand } from "../../core/bridge/contracts";
 import { useI18n } from "../../core/i18n/use-i18n";
+import { cn } from "../../shared/lib/cn";
 import { Button } from "../../shared/ui/button";
-import { StatusPill } from "../../shared/ui/status-pill";
 import { BuyInControl } from "./components/buy-in-control";
 import { FriendRoomDialog } from "./components/friend-room-dialog";
-import { StakeLevelCard } from "./components/stake-level-card";
-import {
-  DEFAULT_STAKE_LEVEL_ID,
-  findStakeLevel,
-  STAKE_LEVELS,
-} from "./model/stake-levels";
+import { StakeLevelList } from "./components/stake-level-list";
+import { projectBuyIn } from "./model/buy-in";
+import { DEFAULT_STAKE_LEVEL_ID, findStakeLevel } from "./model/stake-levels";
+import "./lobby.css";
 
 interface LobbyViewProps {
   readonly bridge: BridgeSnapshot;
@@ -23,8 +17,8 @@ interface LobbyViewProps {
 }
 
 export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
-  const { t } = useI18n();
-  const availableTokens = bridge.tokenSnapshot?.lifetimeTokens ?? 0;
+  const { t, formatTokens } = useI18n();
+  const availableTokens = bridge.tokenSnapshot?.lifetimeTokens ?? null;
   const usageLoading = bridge.officialUsage.phase === "loading";
   const usageFailed = bridge.officialUsage.phase === "error";
   const [selectedLevelId, setSelectedLevelId] = useState(DEFAULT_STAKE_LEVEL_ID);
@@ -32,14 +26,22 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
   const [requestedBuyIn, setRequestedBuyIn] = useState(level.minimumBuyIn);
   const [message, setMessage] = useState<string | null>(null);
   const isMatching = bridge.pool.status !== "idle";
-  const canEnter =
-    availableTokens >= level.minimumBuyIn && bridge.sidecarReady && bridge.identity !== null;
+  const buyIn = projectBuyIn(level, requestedBuyIn, availableTokens);
+  const canEnter = buyIn.affordable && bridge.sidecarReady && bridge.identity !== null;
   const canAutoMatch = canEnter && bridge.discovery.registeredNodes.size > 0;
-  const buyIn = Math.min(
-    Math.max(level.minimumBuyIn, Math.min(level.maximumBuyIn, availableTokens)),
-    Math.max(level.minimumBuyIn, requestedBuyIn),
-  );
-  const networkReady = bridge.sidecarReady && bridge.discovery.registeredNodes.size > 0;
+  const entryHint = availableTokens === null
+    ? null
+    : !buyIn.affordable
+      ? t("lobby.insufficientTokens", { value: formatTokens(level.minimumBuyIn) })
+      : !bridge.sidecarReady
+        ? t("lobby.localNodeStarting")
+        : bridge.identity === null
+          ? t("lobby.identityPreparing")
+          : bridge.discovery.nodes.length === 0
+            ? t("lobby.discoveryRequired")
+            : bridge.discovery.registeredNodes.size === 0
+              ? t("lobby.discoveryConnecting")
+              : null;
 
   const selectLevel = (levelId: string): void => {
     const next = findStakeLevel(levelId);
@@ -49,159 +51,79 @@ export function LobbyView({ bridge, sendCommand }: LobbyViewProps) {
   };
 
   const toggleMatchmaking = (): void => {
-    const command: HostCommand = isMatching
+    if (!isMatching && !canAutoMatch) return;
+    const result = sendCommand(isMatching
       ? { type: "cancel_public_pool" }
-      : { type: "join_public_pool", level_id: level.id, buy_in: buyIn };
-    const result = sendCommand(command);
-    setMessage(
-      result.ok
-        ? isMatching
-          ? t("lobby.stopped")
-          : t("lobby.searching")
-        : result.error,
-    );
+      : { type: "join_public_pool", level_id: level.id, buy_in: buyIn.value });
+    setMessage(result.ok ? t(isMatching ? "lobby.stopped" : "lobby.searching") : result.error);
   };
 
   return (
     <section className="lobby-view h-full overflow-y-auto bg-[var(--canvas)]">
-      <div className="page-content lobby-content">
-        <header className="lobby-heading flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-[30px] font-semibold tracking-[-0.04em]">{t("lobby.title")}</h1>
-            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{t("lobby.shortDescription")}</p>
-          </div>
-          <StatusPill
-            label={t(networkReady ? "lobby.networkReady" : "lobby.communityConnecting")}
-            tone={networkReady ? "neutral" : "attention"}
-            dot
-          />
+      <div className="lobby-content">
+        <header className="lobby-heading">
+          <h1>{t("lobby.title")}</h1>
+          <p>{t("lobby.shortDescription")}</p>
         </header>
 
-        {bridge.tokenSnapshot === null ? (
-          <div
-            className={`mt-5 flex items-center justify-between gap-5 rounded-[13px] border px-4 py-3.5 ${
-              usageFailed
-                ? "border-[color-mix(in_oklab,var(--codex-red-500)_18%,transparent)] bg-[var(--codex-red-25)]"
-                : "border-[#d7e8f5] bg-[#f7fbfe]"
-            }`}
-            aria-live="polite"
-          >
-            <div className="min-w-0">
-              <p
-                className={`text-[13px] font-medium ${
-                  usageFailed ? "text-[var(--codex-red-500)]" : "text-[#276b9b]"
-                }`}
-              >
-                {usageFailed
-                  ? t("lobby.usageFailed")
-                  : usageLoading
-                    ? t("lobby.usageLoading")
-                    : t("lobby.usageMissing")}
-              </p>
-              <p
-                className={`mt-1 text-[12px] leading-5 ${
-                  usageFailed ? "text-[#8b4a47]" : "text-[#628299]"
-                }`}
-              >
-                {usageFailed
-                  ? bridge.officialUsage.error
-                  : t("lobby.usageReadOnly")}
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="shrink-0"
-              disabled={usageLoading}
-              onClick={() => sendCommand({ type: "request_token_refresh" })}
-            >
-              <RefreshCw className={`size-3.5 ${usageLoading ? "animate-spin" : ""}`} />
-              {usageFailed ? t("common.retry") : usageLoading ? t("common.loading") : t("common.refresh")}
-            </Button>
-          </div>
-        ) : null}
-
-        <div className="stake-level-grid mt-7 grid grid-cols-2 gap-3 min-[960px]:grid-cols-4" role="group" aria-label={t("lobby.chooseLevel")}>
-          {STAKE_LEVELS.map((stakeLevel) => (
-            <StakeLevelCard
-              key={stakeLevel.id}
-              level={stakeLevel}
-              selected={stakeLevel.id === selectedLevelId}
-              affordable={availableTokens >= stakeLevel.minimumBuyIn}
-              locked={isMatching}
-              onSelect={() => selectLevel(stakeLevel.id)}
-            />
-          ))}
-        </div>
-
-        <div className="lobby-entry mt-5 grid items-center gap-6 rounded-2xl border border-[var(--line)] bg-white p-5 min-[760px]:grid-cols-[minmax(0,1fr)_260px] min-[960px]:gap-10 min-[960px]:p-6">
-          <div className="min-w-0">
+        <div className="lobby-workspace">
+          <StakeLevelList selectedId={selectedLevelId} locked={isMatching} onSelect={selectLevel} />
+          <div className="lobby-composer">
+            <p className="lobby-selected-level">{t("lobby.selectedLevel", { level: t(level.nameKey) })}</p>
             <BuyInControl
               level={level}
-              value={buyIn}
+              value={buyIn.value}
               availableTokens={availableTokens}
               locked={isMatching}
               onChange={setRequestedBuyIn}
             />
-          </div>
+            <div className="lobby-entry-actions">
+              <Button
+                variant={isMatching ? "danger" : "primary"}
+                size="lg"
+                className="lobby-entry-button"
+                disabled={!isMatching && !canAutoMatch}
+                aria-describedby={entryHint ? "lobby-entry-hint" : availableTokens === null ? "lobby-usage-status" : undefined}
+                onClick={toggleMatchmaking}
+              >
+                {isMatching ? <X className="size-4" /> : null}
+                {t(isMatching ? "lobby.stopSearch" : "lobby.quickSeat")}
+              </Button>
+              <FriendRoomDialog
+                level={level}
+                buyIn={buyIn.value}
+                inviteCode={bridge.friendInviteCode}
+                identityReady={bridge.identity !== null}
+                roomStatus={bridge.friendRoomStatus}
+                sendCommand={sendCommand}
+              />
+            </div>
 
-          <div className="lobby-entry-actions grid gap-3">
-            <Button
-              variant={isMatching ? "danger" : "primary"}
-              size="lg"
-              className="w-full rounded-full"
-              disabled={!canAutoMatch}
-              onClick={toggleMatchmaking}
-            >
-              {isMatching ? <X className="size-4" /> : <Users className="size-4" />}
-              {t(isMatching ? "lobby.stopSearch" : "lobby.quickSeat")}
-            </Button>
-            {bridge.identity === null ? (
-              <p className="text-xs leading-5 text-[#805919]">{t("lobby.identityRequired")}</p>
-            ) : null}
-            {bridge.identity !== null && bridge.discovery.nodes.length === 0 ? (
-              <p className="text-xs leading-5 text-[#805919]">
-                {t("lobby.discoveryRequired")}
-              </p>
-            ) : null}
-            {bridge.identity !== null &&
-            bridge.discovery.nodes.length > 0 &&
-            bridge.discovery.registeredNodes.size === 0 ? (
-              <p className="text-xs leading-5 text-[#805919]">
-                {t("lobby.discoveryConnecting")}
-              </p>
-            ) : null}
-            <FriendRoomDialog
-              level={level}
-              buyIn={buyIn}
-              inviteCode={bridge.friendInviteCode}
-              identityReady={bridge.identity !== null}
-              roomStatus={bridge.friendRoomStatus}
-              sendCommand={sendCommand}
-            />
+            {availableTokens === null ? (
+              <div className="lobby-notice" data-error={usageFailed} role="status" id="lobby-usage-status">
+                <div className="min-w-0">
+                  <p className="font-medium">{t(usageFailed ? "lobby.usageFailed" : usageLoading ? "lobby.usageLoading" : "lobby.usageMissing")}</p>
+                  <p className="mt-1 break-words">{usageFailed ? bridge.officialUsage.error : t("lobby.usageWaitingHint")}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  disabled={usageLoading}
+                  aria-label={t(usageFailed ? "common.retry" : "common.refresh")}
+                  onClick={() => sendCommand({ type: "request_token_refresh" })}
+                >
+                  <RefreshCw className={cn("size-4", usageLoading && "animate-spin")} />
+                </Button>
+              </div>
+            ) : entryHint ? <p className="lobby-entry-hint" role="status" id="lobby-entry-hint">{entryHint}</p> : null}
             {message || bridge.lastWarning ? (
-              <p role="status" className="text-xs leading-5 text-[var(--muted)]">{bridge.lastWarning ?? message}</p>
+              <p className="lobby-entry-hint" role="status">{bridge.lastWarning ?? message}</p>
             ) : null}
           </div>
         </div>
 
-        <details className="lobby-details group mt-5 border-t border-[var(--line)]">
-          <summary className="flex cursor-pointer list-none items-center gap-2 py-4 text-xs text-[var(--muted)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] [&::-webkit-details-marker]:hidden">
-            <Info className="size-4" />
-            <span>{t("lobby.details")}</span>
-            <ChevronDown className="ml-auto size-4 transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="grid gap-4 pb-5 text-xs leading-6 text-[var(--muted)] min-[760px]:grid-cols-2">
-            <div>
-              <p>{t("lobby.description")}</p>
-              <p className="mt-2">{t("lobby.transport")}: {t("lobby.transportValue")}</p>
-            </div>
-            <div>
-              <p className="flex items-center gap-2 font-medium text-[var(--ink)]"><ShieldCheck className="size-4" />{t("lobby.securityTitle")}</p>
-              <p className="mt-2">{t("lobby.securityDescription")}</p>
-            </div>
-          </div>
-        </details>
+        <footer className="lobby-footer"><p>{t("lobby.seatingNote")}</p></footer>
       </div>
     </section>
   );

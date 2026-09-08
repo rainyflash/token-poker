@@ -68,7 +68,7 @@ function createHarness(options = {}) {
 
     requestDisplayMode() {
       state.requestDisplayModeCount += 1;
-      return Promise.resolve({ mode: options.requestedDisplayMode ?? "fullscreen" });
+      return options.displayModePromise ?? Promise.resolve({ mode: options.requestedDisplayMode ?? "fullscreen" });
     }
 
     setupSizeChangedNotifications() {
@@ -115,6 +115,7 @@ function createHarness(options = {}) {
   const sandbox = {
     AbortController,
     CustomEvent: MockCustomEvent,
+    Date,
     clearTimeout,
     console,
     document: {
@@ -179,6 +180,261 @@ function createHarness(options = {}) {
   };
 }
 
+function pendingUntilAbort(signal) {
+  return new Promise((_resolve, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+}
+
+function pollResult(stream = "live", sequence = 7) {
+  return { structuredContent: {
+    version: 1,
+    action: "poll",
+    latest_sequence: sequence,
+    history_truncated: false,
+    events: [],
+    current_state: { stream_id: stream, latest_sequence: sequence, identity: null, events: [] },
+  } };
+}
+
+for (const [label, result] of [
+  ["missing payload", {}],
+  ["empty payload", { structuredContent: {} }],
+  ["invalid cursor", { structuredContent: { latest_sequence: -1, events: [] } }],
+  ["invalid events", { structuredContent: { latest_sequence: 1, events: null } }],
+]) {
+  test(`invalid poll result backs off without advancing hydration: ${label}`, async (context) => {
+    let polls = 0;
+    const delays = [];
+    const harness = createHarness({
+      setTimeout(callback, delay, ...args) {
+        delays.push(delay);
+        return setTimeout(callback, delay, ...args);
+      },
+      callServerTool(params, { signal }) {
+        if (params.name !== "token_holdem_poll") return Promise.resolve({ structuredContent: {} });
+        // Bound the regression even if the old implementation busy-loops.
+        return ++polls <= 5 ? Promise.resolve(result) : pendingUntilAbort(signal);
+      },
+    });
+    context.after(() => harness.app.onteardown());
+    await harness.ready();
+    assert.equal(polls, 1);
+    assert.ok(delays.some((delay) => delay >= 1_000 && delay < 30_000));
+    const warning = harness.state.dispatchedEvents.find(
+      (event) => event.type === "token-holdem:sidecar" && event.detail.type === "warning",
+    );
+    assert.match(warning?.detail.message, /poll|payload|response/iu);
+  });
+}
+
+test("valid immediate empty polls cannot spin while the cursor stays unchanged", async (context) => {
+  let polls = 0;
+  const harness = createHarness({ callServerTool(params, { signal }) {
+    if (params.name !== "token_holdem_poll") return Promise.resolve({ structuredContent: {} });
+    return ++polls <= 5 ? Promise.resolve(pollResult()) : pendingUntilAbort(signal);
+  } });
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  assert.ok(polls <= 2, `Expected hydration and at most one incremental poll, got ${polls}`);
+});
+
+test("cached host notifications cannot retire the live stream after hydration", async (context) => {
+  let polls = 0;
+  let resolvePoll;
+  const harness = createHarness({ callServerTool(params, { signal }) {
+    if (params.name !== "token_holdem_poll") return Promise.resolve({ structuredContent: {} });
+    if (++polls === 1) return Promise.resolve(pollResult("live", 7));
+    if (polls === 2) return new Promise((resolve) => { resolvePoll = resolve; });
+    return pendingUntilAbort(signal);
+  } });
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  harness.app.emit("toolresult", pollResult("cached-before-restart", 999));
+  resolvePoll(pollResult("live", 8));
+  await flushTasks();
+  const projections = harness.state.dispatchedEvents.filter(
+    (event) => event.type === "token-holdem:current-state",
+  );
+  assert.equal(projections.at(-1)?.detail.stream_id, "live");
+  assert.equal(projections.at(-1)?.detail.latest_sequence, 8);
+  assert.ok(!projections.some((event) => event.detail.stream_id === "cached-before-restart"));
+});
+
+test("host replay before hydration cannot suppress the authoritative initial snapshot", async (context) => {
+  let resolvePoll;
+  let polls = 0;
+  const harness = createHarness({ callServerTool(params, { signal }) {
+    if (params.name !== "token_holdem_poll") return Promise.resolve({ structuredContent: {} });
+    if (++polls === 1) return new Promise((resolve) => { resolvePoll = resolve; });
+    return pendingUntilAbort(signal);
+  } });
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  harness.app.emit("toolresult", pollResult("live", 7));
+  harness.app.emit("toolresult", pollResult("cached-before-restart", 999));
+  resolvePoll(pollResult("live", 8));
+  await flushTasks();
+  const latest = harness.state.dispatchedEvents.findLast(
+    (event) => event.type === "token-holdem:current-state",
+  );
+  assert.equal(latest?.detail.stream_id, "live");
+  assert.equal(latest?.detail.latest_sequence, 8);
+});
+
+test("a pending fullscreen request does not block live state hydration", async (context) => {
+  const harness = createHarness({ initialDisplayMode: "inline", displayModePromise: new Promise(() => {}) });
+  context.after(() => harness.app.onteardown());
+  // Do not await app.ready: the old bridge puts the optional display request in that gate.
+  await flushTasks();
+  await flushTasks();
+  assert.equal(harness.state.calls.filter((call) => call.params.name === "token_holdem_poll").length, 1);
+  assert.equal(harness.state.requestDisplayModeCount, 1);
+});
+
+test("a restored fullscreen tab does not request another fullscreen transition", async (context) => {
+  const harness = createHarness();
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  assert.equal(harness.state.requestDisplayModeCount, 0);
+  assert.equal(harness.state.resizeSetupCount, 0);
+  assert.equal(harness.state.calls.filter((call) => call.params.name === "token_holdem_poll").length, 1);
+});
+
+test("resuming a view replaces its pending poll with an immediate state read", async (context) => {
+  const harness = createHarness();
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  const polls = () => harness.state.calls.filter((call) => call.params.name === "token_holdem_poll");
+  const pending = polls()[0];
+  harness.dispatchDocument("visibilitychange", "hidden");
+  assert.equal(pending.options.signal.aborted, false);
+  harness.dispatchDocument("visibilitychange", "visible");
+  await flushTasks();
+  assert.equal(pending.options.signal.aborted, true);
+  assert.equal(polls().length, 2);
+  assert.equal(polls()[1].params.arguments.wait_ms, 0);
+  assert.equal(polls()[1].options.signal.aborted, false);
+  assert.equal(harness.state.requestDisplayModeCount, 0);
+  assert.equal(harness.state.dispatchedEvents.filter(
+    (event) => event.type === "token-holdem:fatal",
+  ).length, 0);
+});
+
+test("a hidden view parks polling and catches up when shown without another agent turn", async (context) => {
+  let polls = 0;
+  let resolvePoll;
+  const harness = createHarness({ callServerTool(params, { signal }) {
+    if (params.name !== "token_holdem_poll") return Promise.resolve({ structuredContent: {} });
+    if (++polls === 1) return Promise.resolve(pollResult());
+    if (polls === 2) return new Promise((resolve) => { resolvePoll = resolve; });
+    return pendingUntilAbort(signal);
+  } });
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  harness.dispatchGlobal("pagehide");
+  resolvePoll(pollResult("live", 8));
+  await flushTasks();
+  assert.equal(polls, 2);
+  harness.dispatchGlobal("pageshow");
+  await flushTasks();
+  assert.equal(polls, 3);
+  const resumed = harness.state.calls.filter((call) => call.params.name === "token_holdem_poll").at(-1);
+  assert.equal(resumed.params.arguments.after_sequence, 8);
+  assert.equal(resumed.params.arguments.wait_ms, 0);
+});
+
+test("rapid hide-show cycles before the next paint cannot strand a visible view", async (context) => {
+  const harness = createHarness();
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  for (let cycle = 0; cycle < 2; cycle += 1) {
+    harness.dispatchDocument("visibilitychange", "hidden");
+    harness.dispatchDocument("visibilitychange", "visible");
+  }
+  await flushTasks();
+  const polls = harness.state.calls.filter((call) => call.params.name === "token_holdem_poll");
+  assert.equal(polls.length, 2);
+  assert.equal(polls[0].options.signal.aborted, true);
+  assert.equal(polls[1].options.signal.aborted, false);
+  assert.equal(harness.state.dispatchedEvents.filter(
+    (event) => event.type === "token-holdem:resume",
+  ).length, 1);
+});
+
+test("a valid retry hydrates from zero and resets the error backoff", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  let polls = 0;
+  const harness = createHarness({ callServerTool(params, { signal }) {
+    if (params.name !== "token_holdem_poll") return Promise.resolve({ structuredContent: {} });
+    polls += 1;
+    if (polls === 1 || polls === 3) return Promise.resolve({});
+    if (polls === 2) return Promise.resolve(pollResult("recovered", 12));
+    return pendingUntilAbort(signal);
+  } });
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  context.mock.timers.tick(1_000);
+  await flushTasks();
+  assert.equal(polls, 3);
+  const pollCalls = () => harness.state.calls.filter((call) => call.params.name === "token_holdem_poll");
+  assert.equal(pollCalls()[1].params.arguments.after_sequence, 0);
+  assert.equal(pollCalls()[1].params.arguments.wait_ms, 0);
+  assert.equal(pollCalls()[2].params.arguments.after_sequence, 12);
+  assert.equal(pollCalls()[2].params.arguments.wait_ms, 20_000);
+  assert.equal(harness.state.dispatchedEvents.filter(
+    (event) => event.type === "token-holdem:current-state",
+  ).at(-1)?.detail.stream_id, "recovered");
+  context.mock.timers.tick(999);
+  await flushTasks();
+  assert.equal(polls, 3);
+  context.mock.timers.tick(1);
+  await flushTasks();
+  assert.equal(polls, 4);
+});
+
+test("malformed polls use bounded exponential backoff and teardown cancels retries", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  let polls = 0;
+  const harness = createHarness({ callServerTool(params) {
+    if (params.name !== "token_holdem_poll") return Promise.resolve({ structuredContent: {} });
+    polls += 1;
+    return Promise.resolve({});
+  } });
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  assert.equal(polls, 1);
+  for (const delay of [1_000, 2_000, 4_000, 8_000, 15_000, 15_000]) {
+    const previous = polls;
+    context.mock.timers.tick(delay - 1);
+    await flushTasks();
+    assert.equal(polls, previous);
+    context.mock.timers.tick(1);
+    await flushTasks();
+    assert.equal(polls, previous + 1);
+  }
+  await harness.app.onteardown();
+  context.mock.timers.tick(60_000);
+  await flushTasks();
+  assert.equal(polls, 7);
+});
+
+test("showing the view interrupts recovery backoff and retries immediately", async (context) => {
+  let polls = 0;
+  const harness = createHarness({ callServerTool(params, { signal }) {
+    if (params.name !== "token_holdem_poll") return Promise.resolve({ structuredContent: {} });
+    return ++polls === 1 ? Promise.resolve({}) : pendingUntilAbort(signal);
+  } });
+  context.after(() => harness.app.onteardown());
+  await harness.ready();
+  harness.dispatchGlobal("pagehide");
+  harness.dispatchGlobal("pageshow");
+  await flushTasks();
+  assert.equal(polls, 2);
+  assert.equal(harness.state.calls.filter((call) => call.params.name === "token_holdem_poll")[1].params.arguments.wait_ms, 0);
+});
+
 test("桥接依赖损坏时保留可见错误，而不是白屏", () => {
   const bootStatus = { textContent: "Opening" };
   const sandbox = {
@@ -197,12 +453,13 @@ test("桥接依赖损坏时保留可见错误，而不是白屏", () => {
   assert.equal(bootStatus.textContent, sandbox.__tokenHoldemBootError);
 });
 
-test("握手完成前暂时隐藏不会被误判为永久 teardown", async () => {
+test("握手完成前暂时隐藏不会被误判为永久 teardown", async (context) => {
   let resolveConnect;
   const connectPromise = new Promise((resolve) => {
     resolveConnect = resolve;
   });
-  const harness = createHarness({ connectPromise });
+  const harness = createHarness({ connectPromise, initialDisplayMode: "inline" });
+  context.after(() => harness.app.onteardown());
 
   harness.dispatchGlobal("pagehide");
   resolveConnect();
@@ -234,7 +491,10 @@ test("pagehide 后 pageshow 会重绘而不终止 MCP 会话", async () => {
     harness.state.dispatchedEvents.filter((event) => event.type === "token-holdem:resume").length,
     1,
   );
-  assert.equal(pollCall?.options.signal.aborted, false);
+  assert.equal(pollCall?.options.signal.aborted, true);
+  const resumedPoll = harness.state.calls.filter((entry) => entry.params.name === "token_holdem_poll").at(-1);
+  assert.notEqual(resumedPoll, pollCall);
+  assert.equal(resumedPoll.options.signal.aborted, false);
 
   await harness.app.onteardown({}, {});
 });
@@ -360,17 +620,26 @@ test("事件轮询延迟时仍立即转发当前牌桌与手牌投影", async ()
 });
 
 test("新事件流重置水位且旧流迟到结果不能覆盖账户和空快照", async (context) => {
-  const harness = createHarness();
+  const responses = [];
+  const harness = createHarness({ callServerTool(params, { signal }) {
+    if (params.name === "token_holdem_poll") return pendingUntilAbort(signal);
+    if (params.name === "token_holdem_refresh_official_usage") return Promise.resolve(responses.shift());
+    return Promise.resolve({ structuredContent: {} });
+  } });
   context.after(() => harness.app.onteardown({}, {}));
   await harness.ready();
-  const publish = (stream, sequence, account) => harness.app.emit("toolresult", { structuredContent: {
-    current_state: { stream_id: stream, latest_sequence: sequence, identity: null, events: [] },
-    account_binding: { account_fingerprint: account, peer_verifiable: false },
-  } });
-  publish("old", 99, "a");
-  publish("new", 2, "b");
-  publish("old", 100, "a");
-  publish("new", 1, "stale-b");
+  // Exercise live RPC responses, not replayable host presentation metadata.
+  const publish = async (stream, sequence, account) => {
+    responses.push({ structuredContent: {
+      current_state: { stream_id: stream, latest_sequence: sequence, identity: null, events: [] },
+      account_binding: { account_fingerprint: account, peer_verifiable: false },
+    } });
+    await harness.command(JSON.stringify({ type: "request_token_refresh" }));
+  };
+  await publish("old", 99, "a");
+  await publish("new", 2, "b");
+  await publish("old", 100, "a");
+  await publish("new", 1, "stale-b");
   assert.equal(harness.state.dispatchedEvents.findLast((event) => event.type === "token-holdem:account-binding").detail.account_fingerprint, "b");
   assert.equal(harness.state.dispatchedEvents.findLast((event) => event.type === "token-holdem:current-state").detail.stream_id, "new");
 });

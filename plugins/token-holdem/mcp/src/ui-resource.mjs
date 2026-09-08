@@ -109,12 +109,17 @@ export function buildHostBridge(version) {
   let latestPayloadSequence = -1;
   const retiredStreams = new Set();
   let eventsHydrated = false;
+  let liveStateReceived = false;
+  let bootstrapConsumed = false;
   let stopped = false;
   let resizeCleanup = null;
   let resizeSetupFailed = false;
   let displayModeSettled = false;
   let viewSuspended = document.visibilityState === "hidden";
   let resumeScheduled = false;
+  let pollRefreshRequested = false;
+  let activePollController = null;
+  let wakePollWait = null;
   let commandQueue = Promise.resolve();
   let updateQueue = Promise.resolve();
   const confirmationErrors = new Map([
@@ -192,7 +197,7 @@ export function buildHostBridge(version) {
     document.removeEventListener?.("freeze", handlePageHide);
     document.removeEventListener?.("resume", handlePageShow);
     app.removeEventListener("hostcontextchanged", applyHostContext);
-    app.removeEventListener("toolresult", consumeResult);
+    app.removeEventListener("toolresult", consumeHostResult);
     sessionController.abort(sessionStoppedError(reason));
   }
 
@@ -203,8 +208,18 @@ export function buildHostBridge(version) {
   }
 
   function handlePageShow() {
-    if (stopped || !viewSuspended || resumeScheduled) return;
+    if (stopped || !viewSuspended) return;
     viewSuspended = false;
+    pollRefreshRequested = true;
+    if (activePollController !== null) {
+      const error = new Error("Token Poker view resumed; refreshing the current state");
+      error.name = "PollResumedError";
+      activePollController.abort(error);
+    }
+    wakePollWait?.();
+    // Coalesce painting, not visibility state: another hide/show can happen
+    // before the animation frame scheduled by the previous resume runs.
+    if (resumeScheduled) return;
     resumeScheduled = true;
     const refresh = () => {
       resumeScheduled = false;
@@ -306,22 +321,64 @@ export function buildHostBridge(version) {
     return typeof text === "string" && text.length > 0 ? text : "Plugin tool call failed";
   }
 
-  function consumeResult(result, eventMode = eventsHydrated ? "incremental" : "metadata") {
-    if (!result || typeof result !== "object") return;
-    const payload = result.structuredContent || result._meta?.widgetData;
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function resultPayload(result) {
+    if (!isRecord(result)) return null;
+    if (isRecord(result.structuredContent)) return result.structuredContent;
+    return isRecord(result._meta?.widgetData) ? result._meta.widgetData : null;
+  }
+
+  function validatePollPayload(result) {
+    const payload = resultPayload(result);
+    if (!payload || !Number.isSafeInteger(payload.latest_sequence) || payload.latest_sequence < 0 ||
+        !Array.isArray(payload.events)) {
+      throw new Error("Invalid Token Poker poll response: missing event payload or cursor. Retrying synchronization.");
+    }
+    function validEntries(entries) {
+      return Array.isArray(entries) && entries.every((entry) =>
+        isRecord(entry) && Number.isSafeInteger(entry.sequence) && entry.sequence >= 0 &&
+        entry.sequence <= payload.latest_sequence && isRecord(entry.event) &&
+        typeof entry.event.type === "string",
+      );
+    }
+    if (!validEntries(payload.events) || (payload.current_state !== undefined &&
+        (!isRecord(payload.current_state) ||
+          payload.current_state.latest_sequence !== payload.latest_sequence ||
+          !validEntries(payload.current_state.events)))) {
+      throw new Error("Invalid Token Poker poll response: inconsistent events or current-state projection. Retrying synchronization.");
+    }
+    return payload;
+  }
+
+  function consumeHostResult(result) {
+    // A restored Codex tab can replay results from a previous MCP process.
+    // Use one cached result for initial presentation only; it must never move
+    // the live event cursor or retire the current server's stream.
+    if (stopped || bootstrapConsumed || liveStateReceived || resultPayload(result) === null) return;
+    bootstrapConsumed = true;
+    consumeResult(result, "metadata", true);
+  }
+
+  function consumeResult(result, eventMode = eventsHydrated ? "incremental" : "metadata", bootstrap = false) {
+    if (!isRecord(result)) return false;
+    const payload = resultPayload(result);
     const incomingStream = payload?.current_state?.stream_id;
-    if (typeof incomingStream === "string" && incomingStream !== streamId) {
-      if (retiredStreams.has(incomingStream)) return;
+    if (!bootstrap && typeof incomingStream === "string" && incomingStream !== streamId) {
+      if (retiredStreams.has(incomingStream)) return false;
       if (streamId !== null) retiredStreams.add(streamId);
       streamId = incomingStream;
       latestSequence = 0;
       latestPayloadSequence = -1;
     }
     const payloadSequence = payload?.current_state?.latest_sequence;
-    if (Number.isSafeInteger(payloadSequence)) {
-      if (payloadSequence < latestPayloadSequence) return;
+    if (!bootstrap && Number.isSafeInteger(payloadSequence)) {
+      if (payloadSequence < latestPayloadSequence) return false;
       latestPayloadSequence = payloadSequence;
     }
+    if (!bootstrap && payload !== null) liveStateReceived = true;
     const officialUsageError = payload && typeof payload === "object" &&
       typeof payload.official_usage_error === "string" && payload.official_usage_error.length > 0
         ? payload.official_usage_error
@@ -344,12 +401,12 @@ export function buildHostBridge(version) {
     if (result.isError) {
       publishCurrentState(payload?.current_state);
       if (officialUsageError === null) publishWarning(resultError(result));
-      return;
+      return false;
     }
-    if (!payload || typeof payload !== "object") return;
+    if (payload === null) return false;
     if (eventMode === "metadata") {
       publishCurrentState(payload.current_state);
-      return;
+      return true;
     }
     if (Array.isArray(payload.events)) {
       for (const entry of payload.events) {
@@ -365,9 +422,10 @@ export function buildHostBridge(version) {
     if (payload.history_truncated === true) {
       publishWarning("Older diagnostic events were truncated; the current identity, matchmaking, room, and hand state was restored from the retained projection.");
     }
+    return true;
   }
 
-  async function callTool(name, argumentsValue, timeoutMs = 30_000, eventMode = "auto") {
+  async function callTool(name, argumentsValue, timeoutMs = 30_000, requestSignal = null) {
     await app.ready;
     if (stopped) throw sessionStoppedError("Token Poker UI session already stopped");
     const callController = new AbortController();
@@ -376,11 +434,14 @@ export function buildHostBridge(version) {
     const forwardSessionAbort = () => {
       callController.abort(sessionController.signal.reason ?? sessionStoppedError());
     };
+    const forwardRequestAbort = () => callController.abort(requestSignal.reason);
     if (sessionController.signal.aborted) {
       forwardSessionAbort();
     } else {
       sessionController.signal.addEventListener("abort", forwardSessionAbort, { once: true });
     }
+    if (requestSignal?.aborted) forwardRequestAbort();
+    else requestSignal?.addEventListener("abort", forwardRequestAbort, { once: true });
     let rejectOnAbort;
     const aborted = new Promise((_, reject) => {
       rejectOnAbort = () => reject(callController.signal.reason ?? sessionStoppedError());
@@ -396,14 +457,14 @@ export function buildHostBridge(version) {
         ),
         aborted,
       ]);
-      consumeResult(
-        result,
-        eventMode === "auto" ? (eventsHydrated ? "incremental" : "metadata") : eventMode,
-      );
+      // Polling validates the complete batch before applying it or advancing
+      // hydration. Other tools keep their command-specific result contracts.
+      if (name !== "token_holdem_poll") consumeResult(result);
       return result;
     } finally {
       clearTimeout(timeout);
       sessionController.signal.removeEventListener("abort", forwardSessionAbort);
+      requestSignal?.removeEventListener("abort", forwardRequestAbort);
       callController.signal.removeEventListener("abort", rejectOnAbort);
     }
   }
@@ -473,7 +534,7 @@ export function buildHostBridge(version) {
       request_id: requestId,
       command,
     });
-    const payload = result?.structuredContent || result?._meta?.widgetData;
+    const payload = resultPayload(result);
     const outcome = payload?.command_result;
     if (!outcome || outcome.request_id !== requestId) {
       throw new Error("Plugin returned a mismatched command result");
@@ -547,46 +608,72 @@ export function buildHostBridge(version) {
   function abortableDelay(delayMs) {
     if (stopped) return Promise.resolve();
     return new Promise((resolveDelay) => {
-      const timeout = setTimeout(finish, delayMs);
+      // A null delay parks the single poll loop while its view is hidden.
+      const timeout = delayMs === null ? null : setTimeout(finish, delayMs);
       function finish() {
-        clearTimeout(timeout);
+        if (timeout !== null) clearTimeout(timeout);
+        if (wakePollWait === finish) wakePollWait = null;
         sessionController.signal.removeEventListener("abort", finish);
         resolveDelay();
       }
+      wakePollWait = finish;
       sessionController.signal.addEventListener("abort", finish, { once: true });
     });
   }
 
   async function pollLoop() {
+    let retryDelayMs = 1_000;
+    let hasPolled = false;
     while (!stopped) {
+      if (viewSuspended && hasPolled) await abortableDelay(null);
+      if (stopped) return;
+      const startedAt = Date.now();
       try {
         const isHydrating = !eventsHydrated;
-        const result = await callTool(
-          "token_holdem_poll",
-          { after_sequence: isHydrating ? 0 : latestSequence, wait_ms: isHydrating ? 0 : 20_000 },
-          30_000,
-          isHydrating ? "hydrate" : "incremental",
-        );
-        if (result?.isError) {
-          const message = resultError(result);
-          if (isTerminalHostError(message)) {
-            publishFatal(message);
-            stopSession(message);
-            return;
-          }
-          await abortableDelay(1_000);
-        } else if (isHydrating) {
-          eventsHydrated = true;
+        const refreshImmediately = isHydrating || pollRefreshRequested;
+        pollRefreshRequested = false;
+        const beforeSequence = latestSequence;
+        const beforeStream = streamId;
+        let result;
+        const pollController = new AbortController();
+        activePollController = pollController;
+        hasPolled = true;
+        try {
+          result = await callTool(
+            "token_holdem_poll",
+            { after_sequence: isHydrating ? 0 : latestSequence, wait_ms: refreshImmediately ? 0 : 20_000 },
+            30_000,
+            pollController.signal,
+          );
+        } finally {
+          if (activePollController === pollController) activePollController = null;
+        }
+        if (result?.isError) throw new Error(resultError(result));
+        validatePollPayload(result);
+        if (!consumeResult(result, isHydrating ? "hydrate" : "incremental")) {
+          throw new Error("Token Poker poll returned an obsolete stream or cursor. Retrying synchronization.");
+        }
+        eventsHydrated = true;
+        retryDelayMs = 1_000;
+        // Even a nominally successful host response can arrive immediately
+        // without progress. Yield to painting and bound traffic in that case.
+        const progressed = latestSequence > beforeSequence || streamId !== beforeStream;
+        const minimumInterval = progressed ? (isHydrating ? 0 : 100) : 1_000;
+        const remainingDelay = minimumInterval - (Date.now() - startedAt);
+        if (remainingDelay > 0) {
+          await abortableDelay(remainingDelay);
         }
       } catch (error) {
         if (isExpectedStop(error)) return;
+        if (error?.name === "PollResumedError") continue;
         if (isTerminalHostError(error)) {
           publishFatal(errorMessage(error));
           stopSession(errorMessage(error));
           return;
         }
         publishWarning(errorMessage(error));
-        await abortableDelay(1_000);
+        await abortableDelay(retryDelayMs);
+        retryDelayMs = Math.min(15_000, retryDelayMs * 2);
       }
     }
   }
@@ -611,21 +698,42 @@ export function buildHostBridge(version) {
     }
   }
 
+  async function settleDisplayMode(initialContext) {
+    if (initialContext?.displayMode === "fullscreen") {
+      displayModeSettled = true;
+      return;
+    }
+    try {
+      const result = await app.requestDisplayMode(
+        { mode: "fullscreen" },
+        { signal: sessionController.signal, timeout: 5_000 },
+      );
+      if (stopped) return;
+      displayModeSettled = true;
+      syncResizeNotifications(result?.mode ?? app.getHostContext?.()?.displayMode);
+    } catch (error) {
+      if (isExpectedStop(error)) return;
+      displayModeSettled = true;
+      syncResizeNotifications(app.getHostContext?.()?.displayMode ?? initialContext?.displayMode);
+      publishWarning("Codex could not change the table display mode: " + errorMessage(error));
+    }
+  }
+
   app.addEventListener("hostcontextchanged", applyHostContext);
-  app.addEventListener("toolresult", consumeResult);
+  app.addEventListener("toolresult", consumeHostResult);
   app.onteardown = async () => {
     stopSession("Codex host tore down the Token Poker UI");
     return {};
   };
   app.ready = app.connect()
-    .then(async () => {
+    .then(() => {
       if (stopped) return;
       const initialContext = app.getHostContext?.();
       applyHostContext(initialContext);
-      const displayResult = await app.requestDisplayMode({ mode: "fullscreen" }).catch(() => null);
-      displayModeSettled = true;
-      syncResizeNotifications(displayResult?.mode ?? initialContext?.displayMode);
-      if (stopped) return;
+      // Fullscreen is a presentation preference, not a prerequisite for data.
+      // Re-requesting it on restored fullscreen tabs also needlessly remounts
+      // the host container while React is initializing.
+      void settleDisplayMode(initialContext);
       updateQueue = updateQueue.then(() =>
         runUpdateTool("token_holdem_check_update", "checking", 45_000),
       );

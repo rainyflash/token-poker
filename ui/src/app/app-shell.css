@@ -1,0 +1,231 @@
+.app-header {
+  position: relative;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex: none;
+  height: 88px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--canvas);
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex: none;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -.025em;
+}
+.app-brand-mark {
+  width: 34px;
+  height: 34px;
+}
+.app-brand .app-preview-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.app-toolbar, .app-utilities {
+  display: flex;
+  align-items: center;
+}
+.app-toolbar {
+  gap: 24px;
+  min-width: 0;
+}
+.app-utilities {
+  gap: 10px;
+}
+.app-network-status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 0 24px;
+  min-height: 24px;
+  border: 0;
+  border-inline: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 150ms;
+}
+.app-network-status:hover {
+  color: var(--ink);
+}
+.app-network-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--codex-orange-500);
+}
+.app-network-status[data-ready="true"] .app-network-dot {
+  background: var(--codex-green-500);
+}
+.app-language {
+  padding: 0 4px;
+  gap: 8px;
+  font-size: 15px;
+}
+.app-account-trigger {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.app-account-trigger:hover {
+  background: var(--surface-subtle);
+}
+.app-account-trigger:focus-visible, .app-network-status:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+.app-account-avatar {
+  width: 48px;
+  height: 48px;
+  font-size: 17px;
+}
+.app-account-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.app-account-copy strong {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.app-account-copy > span {
+  font-size: 15px;
+  line-height: 1.3;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.app-account-chevron {
+  margin-left: 8px;
+}
+
+.token-holdem-app[data-surface="table"] .app-header {
+  height: 60px;
+}
+.token-holdem-app[data-surface="table"] .app-account-avatar {
+  width: 32px;
+  height: 32px;
+}
+
+@media (max-width: 1199px) {
+  .app-header {
+    height: 72px;
+    padding-inline: 24px;
+  }
+  .app-brand {
+    gap: 12px;
+    font-size: 17px;
+  }
+  .app-brand-mark {
+    width: 28px;
+    height: 28px;
+  }
+  .app-toolbar {
+    gap: 12px;
+  }
+  .app-utilities {
+    gap: 2px;
+  }
+  .app-network-status {
+    padding-inline: 14px;
+    font-size: 13px;
+  }
+  .app-account-avatar {
+    width: 36px;
+    height: 36px;
+    font-size: 14px;
+  }
+  .app-account-copy strong {
+    font-size: 13px;
+    max-width: 112px;
+  }
+  .app-account-copy > span {
+    font-size: 12px;
+  }
+  .app-account-trigger {
+    gap: 8px;
+  }
+  .app-language {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 879px) {
+  .app-account-copy, .app-account-chevron {
+    display: none;
+  }
+  .app-toolbar {
+    gap: 10px;
+  }
+  .app-header {
+    padding-inline: 16px;
+  }
+}
+
+@media (max-width: 639px) {
+  .app-header {
+    height: auto;
+    min-height: 64px;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 12px 16px;
+  }
+  .app-brand {
+    gap: 10px;
+  }
+  .app-brand-mark {
+    width: 24px;
+    height: 24px;
+  }
+  .app-toolbar {
+    width: 100%;
+    justify-content: space-between;
+    gap: 4px;
+  }
+  .app-account-avatar {
+    width: 30px;
+    height: 30px;
+  }
+  .app-network-status {
+    padding-inline: 10px;
+    font-size: 12px;
+  }
+  .app-language {
+    font-size: 12px;
+  }
+  .token-holdem-app[data-surface="table"] .app-header {
+    height: auto;
+  }
+}
+
+@media (max-width: 379px) {
+  .app-network-status > :last-child {
+    display: none;
+  }
+}

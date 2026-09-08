@@ -145,19 +145,8 @@ textarea {
   padding: clamp(24px, 3.5vh, 40px) clamp(20px, 4vw, 64px);
 }
 
-.lobby-content {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.lobby-details {
-  flex: none;
-}
-
 @media (max-width: 759px) {
   .page-content { padding: 24px 16px; }
-  .lobby-content { justify-content: flex-start; }
 }
 
 @media (prefers-reduced-motion: reduce) {
